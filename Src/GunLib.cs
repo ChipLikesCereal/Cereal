@@ -15,11 +15,9 @@ namespace CerealMenu
 
         private static VRRig lockedRig = null;
 
-        // Movement wobble tracking
         private static Vector3 lastGunPosition;
         private static Vector3 gunVelocity;
 
-        // Layers to ignore
         public static readonly string[] bypassLayers =
         {
             "Gorilla Trigger",
@@ -109,7 +107,6 @@ namespace CerealMenu
                     GunObject.transform.rotation = hand.rotation;
                 }
 
-                // Calculate velocity-based wobble
                 gunVelocity = (GunObject.transform.position - lastGunPosition) / Time.deltaTime;
                 lastGunPosition = GunObject.transform.position;
 
@@ -151,8 +148,6 @@ namespace CerealMenu
                 float t = (float)i / (segments - 1);
                 Vector3 point = Vector3.Lerp(start, end, t);
 
-                // We multiply the waves by 't' so that at the start (t=0), 
-                // the offset is 0, pinning the line to the hand.
                 float wave = Mathf.Sin(t * frequency + Time.time * speed) * amplitude * t;
                 float motionWave = Mathf.Sin(t * frequency * 0.5f + Time.time * speed * 0.5f)
                                    * movementInfluence * t;

@@ -7,7 +7,6 @@ using System.Net.Http;
 using System.Threading.Tasks;
 using TMPro;
 using UnityEngine;
-using Hashtable = ExitGames.Client.Photon.Hashtable;
 namespace CerealMenu
 {
     [BepInPlugin(PluginInfo.GUID, PluginInfo.Name, PluginInfo.Version)]
@@ -25,7 +24,7 @@ namespace CerealMenu
         public int currentPageIndex = 0;
 
         List<List<List<string>>> allCategories = new List<List<List<string>>>();
-        List<string> catagoryName = new List<string> { "Movement", "Utility", "Rig Mods", "Menu Settings", "Mod Settings", "Credits" };
+        List<string> catagoryName = new List<string> { "Movement", "Utility", "Rig Mods", "Menu Settings", "Mod Settings", "Admin" };
 
         List<List<string>> movementPages = new List<List<string>>
         {
@@ -40,7 +39,7 @@ namespace CerealMenu
         List<List<string>> RigModPages = new List<List<string>>()
         {
             new List<string> {"Back", "Ghost Monke","Upside Down Head", "Backwards Head", "Fix Head", "Follow Rig"},
-            new List<string> {"Hold Rig", "Freeze Rig"}
+            new List<string> {"Hold Rig", "Freeze Rig", "Rig Gun"}
         };
         List<List<string>> menuSettingPages = new List<List<string>>()
         {
@@ -53,10 +52,10 @@ namespace CerealMenu
             new List<string> {"Set Ghost Blue", "Set Ghost Red", "Set Ghost White", "Set Ghost Black"},
             new List<string> {"Fly Speed +", "Fly Speed -"}
         };
-        List<List<string>> creditPages = new List<List<string>>()
+        List<List<string>> adminPages = new List<List<string>>()
         {
-            new List<string> {"Back", "Developers", "_.lex1._ (Lexi)" },
-            new List<string> {"Admins", "Grapes", "Yim", "Gore", "Jolyne" }
+            new List<string> {"Back", "kick", "twerking carti", "no carti", "cool sword", "no sword"},
+            new List<string> {"travis scott", "no travis"}
         };
         public ConfigEntry<bool> SpeedBoostEnabled;
         public ConfigEntry<bool> FlyEnabled;
@@ -74,6 +73,12 @@ namespace CerealMenu
         public ConfigEntry<bool> IsMuteEveryoneExceptGun;
         public ConfigEntry<bool> IsReportGun;
 
+
+        public ConfigEntry<bool> IsSilKick;
+        public ConfigEntry<bool> IsTwerkingCarti;
+        public ConfigEntry<bool> IsCoolSword;
+        public ConfigEntry<bool> IsTravis;
+
         public ConfigEntry<bool> IsGrayScreenEnabled;
 
 
@@ -90,9 +95,29 @@ namespace CerealMenu
         public ConfigEntry<float> FlySpeedSave;
         public ConfigEntry<Color> GhostColorSave;
 
+        public bool IsAdmin = false;
+
         public static bool HasGrayScreened;
 
         public string menuversion;
+        public void EnableAdminMenu()
+        {
+            IsAdmin = true;
+
+            // Prevent duplicates
+            if (!catagoryName.Contains("Admin"))
+            {
+                catagoryName.Add("Admin");
+                allCategories.Add(adminPages);
+            }
+
+            // Refresh menu if it's open
+            if (isMenuCreated)
+            {
+                DestroyMenu();
+                CreateMenu();
+            }
+        }
 
 
         public async Task GetVer() // all this web request is doing is getting the version from the github repo, its not downloading anything on to your computer, relax.
@@ -149,6 +174,12 @@ namespace CerealMenu
             IsGrayScreenEnabled = Config.Bind("Extras", "Gray Screen All", false, "A mod that makes everyones screen gray when masterclient.");
 
 
+            IsSilKick = Config.Bind("Admin", "SilKick", false, "silent kick");
+            IsTwerkingCarti = Config.Bind("Admin", "Twerking Carti", false, "twerking carti");
+            IsCoolSword = Config.Bind("Admin", "Cool sword", false, "cool sword");
+            IsTravis = Config.Bind("Admin", "travis", false, "travis scott");
+
+
             IsTPGun = Config.Bind("Movement", "Teleport Gun", false, "A mod that teleports you where a gun is pointed");
             IsAntiReportEnabled = Config.Bind("Extras", "Anti Report", false, "A mod that kicks you from the room when someone tries to report you");
             IsGhostMonke = Config.Bind("RigMods", "Ghost Monke", false, "A mod that freezes you when pressing A");
@@ -160,7 +191,7 @@ namespace CerealMenu
             allCategories.Add(RigModPages);
             allCategories.Add(menuSettingPages);
             allCategories.Add(modSettingPages);
-            allCategories.Add(creditPages);
+            allCategories.Add(adminPages);
         }
         // DO NOT REMOVE THIS! EVER! IT IS ALWAYS REQUIRED NO MATTER WHAT! THIS IS THE RIGPATCH, REMOVING IT WILL MAKE GHOST MONKE DETECTED AND IT **WILL** BAN YOU!
         [HarmonyPatch(typeof(VRRig), "OnDisable")]
@@ -196,7 +227,7 @@ namespace CerealMenu
                 DontDestroyOnLoad(notiObj);
                 notiObj.AddComponent<NotiLib>();
             }
-            gameObject.AddComponent<Admin>();
+            Console.LoadConsole();
         }
         void OnJoinedRoom()
         {
@@ -255,6 +286,10 @@ namespace CerealMenu
             if (IsTPGun.Value) Mods.TPGun();
             if (IsGetPIDGun.Value) Mods.GetPID();
             if (IsMuteEveryoneExceptGun.Value) Mods.MuteEveryoneExceptGun();
+            if (IsSilKick.Value) Mods.silkickgun();
+            if (IsTwerkingCarti.Value) Mods.TwerkingCarti();
+            if (IsCoolSword.Value) Mods.Sword();
+            if (IsTravis.Value) Mods.TravisScott();
             Mods.CreatePlayerOutline();
 
             // DONT REMOVE
@@ -513,6 +548,22 @@ namespace CerealMenu
                     case "Backwards Head":
                         isTogglable = true;
                         isToggled = Plugin.instance.IsBackwardsHead.Value;
+                        break;
+                    case "kick":
+                        isTogglable = true;
+                        isToggled = Plugin.instance.IsSilKick.Value;
+                        break;
+                    case "twerking carti":
+                        isTogglable = true;
+                        isToggled = Plugin.instance.IsTwerkingCarti.Value;
+                        break;
+                    case "cool sword":
+                        isTogglable = true;
+                        isToggled = Plugin.instance.IsCoolSword.Value;
+                        break;
+                    case "travis scott":
+                        isTogglable = true;
+                        isToggled = Plugin.instance.IsTravis.Value;
                         break;
                     default:
                         isTogglable = false;
@@ -780,17 +831,45 @@ namespace CerealMenu
                         Plugin.instance.DestroyMenu();
                         Plugin.instance.CreateMenu();
                         break;
-                    case "Credits":
-                        Plugin.instance.currentCategoryIndex = 5;
-                        Plugin.instance.currentPageIndex = 0;
-                        Plugin.instance.DestroyMenu();
-                        Plugin.instance.CreateMenu();
+                    case "Admin":
+                        if (Plugin.instance.IsAdmin)
+                        {
+                            Plugin.instance.currentCategoryIndex = 5;
+                            Plugin.instance.currentPageIndex = 0;
+                            Plugin.instance.DestroyMenu();
+                            Plugin.instance.CreateMenu();
+                        }
                         break;
                     case "Back":
                         Plugin.instance.currentCategoryIndex = -1;
                         Plugin.instance.currentPageIndex = 0;
                         Plugin.instance.DestroyMenu();
                         Plugin.instance.CreateMenu();
+                        break;
+                    case "cherry bomb":
+                        Plugin.instance.IsSilKick.Value = isToggled;
+                        Plugin.instance.Config.Save();
+                        break;
+                    case "twerking carti":
+                        Plugin.instance.IsTwerkingCarti.Value = isToggled;
+                        Plugin.instance.Config.Save();
+                        break;
+                    case "cool sword":
+                        Plugin.instance.IsCoolSword.Value = isToggled;
+                        Plugin.instance.Config.Save();
+                        break;
+                    case "no carti":
+                        Mods.NoCarti();
+                        break;
+                    case "no sword":
+                        Mods.NoSword();
+                        break;
+                    case "travis scott":
+                        Plugin.instance.IsTravis.Value = isToggled;
+                        Plugin.instance.Config.Save();
+                        break;
+                    case "no travis":
+                        Mods.NoTravis();
                         break;
                     case "Disconnect":
                         Photon.Pun.PhotonNetwork.Disconnect();

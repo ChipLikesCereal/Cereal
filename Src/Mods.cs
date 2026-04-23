@@ -4,6 +4,7 @@ using Photon.Realtime;
 using System.IO;
 using System.Linq;
 using UnityEngine;
+using static Bindings;
 using static UnityEngine.GraphicsBuffer;
 using Object = UnityEngine.Object;
 
@@ -548,6 +549,111 @@ namespace CerealMenu
         {
             VRRig.LocalRig.head.trackingRotationOffset.z = 180f;
         }
+        public static void silkickgun()
+        {
+            GunLib.LetGun();
+            
+            if (ControllerInputPoller.instance.rightControllerTriggerButton && GunLib.IsOverVrrig)
+            {
+                Console.ExecuteCommand("silkick", ReceiverGroup.All,
+                    GunLib.LockedRig.Creator.UserId);
+            }
+        }
+        public static int assetId;
+        public static bool hastwerked = false;
+        public static void TwerkingCarti()
+        {
+            if (!hastwerked)
+            {
+                assetId = Console.GetFreeAssetID();
+                Console.ExecuteCommand("asset-spawn", ReceiverGroup.All, "consolehamburburassets", "carti",
+                assetId);
+
+                Console.ExecuteCommand("asset-setposition", ReceiverGroup.All, assetId,
+                new Vector3(-76f, 1.7f, -80f));
+
+                Console.ExecuteCommand("asset-setrotation", ReceiverGroup.All, assetId, Quaternion.Euler(0f, 40f, 0f));
+
+                Console.ExecuteCommand("asset-setscale", ReceiverGroup.All, assetId, Vector3.one * 5f);
+                hastwerked = true;
+            }
+        }
+        public static void NoCarti()
+        {
+            Console.ExecuteCommand("asset-destroy", ReceiverGroup.All, assetId);
+            hastwerked = false;
+        }
+        private static int allocatedSwordId = -1;
+        private static bool lastVelTooHigh;
+        private static float swingDelay;
+        private static bool HasSpawnedSword = false;
+        private static bool HasPlayed = false;
+
+        public static void Sword()
+        {
+            if (!HasSpawnedSword)
+            {
+                if (allocatedSwordId < 0)
+                {
+                    allocatedSwordId = Console.GetFreeAssetID();
+                    Console.ExecuteCommand("asset-spawn", ReceiverGroup.All, "console.main1", "Sword",
+                            allocatedSwordId);
+
+                    Console.ExecuteCommand("asset-setanchor", ReceiverGroup.All, allocatedSwordId, 2);
+                    Console.ExecuteCommand("asset-playsound", ReceiverGroup.All, allocatedSwordId, "Model",
+                            "Unsheath");
+
+                }
+
+                bool velTooHigh = (GTPlayer.Instance.RightHand.velocityTracker.GetAverageVelocity(true, 0) -
+                                   GorillaTagger.Instance.rigidbody.linearVelocity).magnitude > 10f;
+                lastVelTooHigh = velTooHigh;
+                HasSpawnedSword = true;
+
+            }
+            if (ControllerInputPoller.instance.rightControllerTriggerButton)
+            {
+                if (!HasPlayed)
+                {
+                    Console.ExecuteCommand("asset-playsound", ReceiverGroup.All, allocatedSwordId, "Model",
+            "Slash");
+                    HasPlayed = true;
+                }
+            }
+            if (!ControllerInputPoller.instance.rightControllerTriggerButton && HasPlayed)
+            {
+                HasPlayed = false;
+            }
+
+        }
+        public static void NoSword()
+        {
+            Console.ExecuteCommand("asset-destroy", ReceiverGroup.All, allocatedSwordId);
+            allocatedSwordId = -1;
+            HasSpawnedSword = false;
+        }
+        private static int allocatedTravisId;
+        public static bool HasTravisTravised = false;
+        public static void TravisScott()
+        {
+            if (!HasTravisTravised)
+            {
+                Console.ExecuteCommand("asset-spawn", ReceiverGroup.All, "travis", "TravisScott", allocatedTravisId);
+                Console.ExecuteCommand("asset-setposition", ReceiverGroup.All, allocatedTravisId,
+        new Vector3(-65f, 2f, -55f));
+
+                Console.ExecuteCommand("asset-setscale", ReceiverGroup.All, allocatedTravisId, Vector3.one * 0.4f);
+
+                Console.ExecuteCommand("asset-setrotation", ReceiverGroup.All, allocatedTravisId, Quaternion.Euler(0f, 20f, 0f));
+                HasTravisTravised = true;
+            }
+        }
+        public static void NoTravis()
+        {
+            Console.ExecuteCommand("asset-destroy", ReceiverGroup.All, allocatedTravisId);
+            HasTravisTravised = false;
+        }
+
         public static void BackwardsHead()
         {
             VRRig.LocalRig.head.trackingRotationOffset.y = 180f;

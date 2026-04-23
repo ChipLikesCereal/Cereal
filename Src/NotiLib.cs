@@ -9,10 +9,9 @@ namespace CerealMenu
     {
         public static NotiLib Instance;
 
-        // Store all active notifications
         private static List<GameObject> notifications = new List<GameObject>();
 
-        private const float Y_OFFSET = 0.05f; // vertical spacing
+        private const float Y_OFFSET = 0.05f;
 
         public static void SendNotifacation(string message)
         {
@@ -21,12 +20,11 @@ namespace CerealMenu
             var textNotifacation = new GameObject("NotificationLabel");
             textNotifacation.transform.SetParent(GorillaLocomotion.GTPlayer.Instance.bodyCollider.transform);
 
-            // Add to list FIRST so index is correct
             notifications.Add(textNotifacation);
 
             int index = notifications.Count - 1;
 
-            // Position stacking upward
+
             textNotifacation.transform.localPosition = new Vector3(0f, index * Y_OFFSET, 0.45f);
 
             textNotifacation.transform.LookAt(GorillaLocomotion.GTPlayer.Instance.headCollider.transform.position);
@@ -42,7 +40,6 @@ namespace CerealMenu
             text.rectTransform.sizeDelta = new Vector2(500f, 400f);
             text.transform.localScale = new Vector3(0.0025f, 0.0025f, 0.0025f);
 
-            // Start lifetime coroutine
             Instance.StartCoroutine(Instance.DestroyAfterTime(textNotifacation, 3f));
         }
 
