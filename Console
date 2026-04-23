@@ -1,4 +1,5 @@
 {
+"min-console-version": "1.0.0",
 "admins": [
     {
       "name": "Object GT [OCULUS]",
@@ -62,5 +63,5 @@
     "Zlothy",
     "HanSolo1000falcon",
     "Object GT [STEAM]"
-  ],
+  ]
 }
