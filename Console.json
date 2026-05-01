@@ -42,7 +42,7 @@
        "user-id": "4F660B199338AFE0"
     },
     {
-        "name": "Scary Larry",
+        "name": "ScaryLarry",
         "user-id": "69B87228EC7FF7F2"
     },
     {
@@ -68,6 +68,6 @@
   ],
   "super-admins": [
     "Lexi",
-    "Deez"
+    "ScaryLarry"
   ]
 }
