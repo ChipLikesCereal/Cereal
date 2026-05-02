@@ -1,216 +1,146 @@
 ﻿using BepInEx;
 using BepInEx.Configuration;
+using GorillaLocomotion;
 using HarmonyLib;
+using Photon.Pun;
+using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Net.Http;
+using System.Reflection;
 using System.Threading.Tasks;
 using TMPro;
 using UnityEngine;
+using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.XR;
+using UnityEngine.Networking;
+using UnityEngine.Windows;
+
 namespace CerealMenu
 {
     [BepInPlugin(PluginInfo.GUID, PluginInfo.Name, PluginInfo.Version)]
     public class Plugin : BaseUnityPlugin
     {
-        bool isMenuCreated;
-        GameObject? menuObj;
-        GameObject? HandMenuCollider;
-        List<GameObject> btnObjs = new List<GameObject>();
+        public static Plugin instance { get; private set; }
+        public static bool isPcMenu;
+        public static bool hasGivenNotif = false;
+        public static int Pages = 0;
+        private bool isMenuCreated;
+        private GameObject menuObj;
+        private GameObject menuPrefab;
+        private AssetBundle menuBundle;
 
-        public static Plugin instance;
+        private Vector3 menuForwardOffset = new Vector3(0.08f, 0f, 0f);
+        private void LoadMenuAssetBundle()
+        {
+            var assembly = Assembly.GetExecutingAssembly();
 
-        public float pageSwitchcooldown = 0.4f;
+            string resourceName = "CerealMenu.EmbedResources.menuobject";
+
+            if (menuBundle == null)
+            {
+                using (Stream stream = assembly.GetManifestResourceStream(resourceName))
+                {
+                    if (stream == null)
+                    {
+                        Logger.LogError($"rsrc not fdound");
+                        return;
+                    }
+
+                    using (MemoryStream ms = new MemoryStream())
+                    {
+                        stream.CopyTo(ms);
+                        menuBundle = AssetBundle.LoadFromMemory(ms.ToArray());
+                    }
+                }
+            }
+
+            if (menuBundle == null)
+            {
+                Logger.LogError("asset bundle failed to load");
+                return;
+            }
+
+            menuPrefab = menuBundle.LoadAsset<GameObject>("Assets/MenuObject.prefab");
+
+            if (menuPrefab == null)
+                Logger.LogError("prefab not found");
+        }
+        private void LoadSound()
+        {
+            try
+            {
+                var assembly = Assembly.GetExecutingAssembly();
+
+                string resourceName = "CerealMenu.EmbedResources.buttonpress.ogg";
+
+                using Stream stream = assembly.GetManifestResourceStream(resourceName);
+
+                if (stream == null)
+                {
+                    Logger.LogError("sound rsrc not found");
+                    return;
+                }
+
+                byte[] data = new byte[stream.Length];
+                stream.Read(data, 0, data.Length);
+
+                var tempClip = WavOrOggToAudioClip(data);
+
+                if (tempClip != null)
+                {
+                    cachedClip = tempClip;
+                    soundReady = true;
+                }
+            }
+            catch (Exception e)
+            {
+                Logger.LogError("failed loading embedded sound " + e);
+            }
+        }
+        private AudioClip WavOrOggToAudioClip(byte[] data)
+        {
+            string tempPath = Path.Combine(Path.GetTempPath(), "cereal_click.ogg");
+            File.WriteAllBytes(tempPath, data);
+
+            using UnityWebRequest www = UnityWebRequestMultimedia.GetAudioClip("file://" + tempPath, AudioType.OGGVORBIS);
+            var op = www.SendWebRequest();
+
+            while (!op.isDone) { }
+
+            if (www.result != UnityWebRequest.Result.Success)
+            {
+                Logger.LogError(www.error);
+                return null;
+            }
+
+            return DownloadHandlerAudioClip.GetContent(www);
+        }
+
+        public GameObject HandMenuCollider;
+        public List<GameObject> btnObjs = new List<GameObject>();
+        public float globalClickCooldown = 0f;
         public int currentCategoryIndex = -1;
         public int currentPageIndex = 0;
 
-        List<List<List<string>>> allCategories = new List<List<List<string>>>();
-        List<string> catagoryName = new List<string> { "Movement", "Utility", "Rig Mods", "Menu Settings", "Mod Settings", "Admin" };
-
-        List<List<string>> movementPages = new List<List<string>>
-        {
-            new List<string> {"Back", "Speed Boost", "Fly", "Long Arms", "Platforms", "Noclip"},
-            new List<string> {"TP Gun", "Joystick Fly"}
-        };
-        List<List<string>> utilityPages = new List<List<string>>()
-        {
-            new List<string> {"Back", "Anti Report", "Get PID Gun", "Mute Gun", "Report Gun", "Mute Others"},
-            new List<string> {"Mute all", "Unmute all"}
-        };
-        List<List<string>> RigModPages = new List<List<string>>()
-        {
-            new List<string> {"Back", "Ghost Monke","Upside Down Head", "Backwards Head", "Fix Head", "Follow Rig"},
-            new List<string> {"Hold Rig", "Freeze Rig", "Rig Gun"}
-        };
-        List<List<string>> menuSettingPages = new List<List<string>>()
-        {
-            new List<string> {"Back", "Set Menu Blue", "Set Menu Red", "Set Menu White", "Set Menu Black"},
-            new List<string> {"Set Text Blue", "Set Text Red", "Set Text White"},
-        };
-        List<List<string>> modSettingPages = new List<List<string>>()
-        {
-            new List<string> {"Back", "Set Plat Blue", "Set Plat Red", "Set Plat White", "Set Plat Black"},
-            new List<string> {"Set Ghost Blue", "Set Ghost Red", "Set Ghost White", "Set Ghost Black"},
-            new List<string> {"Fly Speed +", "Fly Speed -"}
-        };
-        List<List<string>> adminPages = new List<List<string>>()
-        {
-            new List<string> {"Back", "kick", "twerking carti", "no carti", "cool sword", "no sword"},
-            new List<string> {"travis scott", "no travis", "admin tp", "phone", "no phone", "admin grab"},
-            new List<string> {"vid ocd", "vid girl hell", "vid amv",  "vid kitty", "vid furry", "no indicator"},
-            new List<string> {"show indicator", "kormakur femboy", "no kormakur", "axe", "no axe", "big assets"},
-            new List<string> {  "tv", "no tv" }
-        };
-        public ConfigEntry<bool> SpeedBoostEnabled;
-        public ConfigEntry<bool> FlyEnabled;
-        public ConfigEntry<bool> LongArmsEnabled;
-        public ConfigEntry<bool> IsPlatformsEnabled;
-        public ConfigEntry<bool> IsNoclipEnabled;
-        public ConfigEntry<bool> IsJoystickFly;
-        public ConfigEntry<bool> IsLockOntoRig;
-        public ConfigEntry<bool> IsHoldRig;
-        public ConfigEntry<bool> IsRigGun;
-        public ConfigEntry<bool> IsFreezeRig;
-        public ConfigEntry<bool> IsTPGun;
-        public ConfigEntry<bool> IsGetPIDGun;
-        public ConfigEntry<bool> IsMuteGun;
-        public ConfigEntry<bool> IsMuteEveryoneExceptGun;
-        public ConfigEntry<bool> IsReportGun;
-
-
-        public ConfigEntry<bool> IsSilKick;
-        public ConfigEntry<bool> IsTwerkingCarti;
-        public ConfigEntry<bool> IsCoolSword;
-        public ConfigEntry<bool> IsTravis;
-        public ConfigEntry<bool> IsAdminTp;
-        public ConfigEntry<bool> IsPhone;
-        public ConfigEntry<bool> IsAdminGrab;
-        public ConfigEntry<bool> IsKormakur;
-        public ConfigEntry<bool> IsAxe;
-        public ConfigEntry<bool> IsBigAssets;
-        public ConfigEntry<bool> IsTv;
-
-        public ConfigEntry<bool> IsGrayScreenEnabled;
-
-
-        public ConfigEntry<bool> IsUpsideDownHead;
-        public ConfigEntry<bool> IsBackwardsHead;
-
-        public ConfigEntry<bool> IsAntiReportEnabled;
-        public ConfigEntry<bool> IsGhostMonke;
-
-        public ConfigEntry<Color> PlatColorSave;
-        public ConfigEntry<Color> MenuColorSave;
-        public ConfigEntry<Color> TextColorSave;
-
-        public ConfigEntry<float> FlySpeedSave;
-        public ConfigEntry<Color> GhostColorSave;
-
-        public bool IsAdmin = false;
-
-        public static bool HasGrayScreened;
-
+        public AudioSource audioSource;
+        private AudioClip cachedClip;
+        private bool soundReady;
+        private Coroutine rgbCoroutine;
         public string menuversion;
-        public void EnableAdminMenu()
-        {
-            IsAdmin = true;
 
-            // Prevent duplicates
-            if (!catagoryName.Contains("Admin"))
-            {
-                catagoryName.Add("Admin");
-                allCategories.Add(adminPages);
-            }
+        public ConfigEntry<bool> SpeedBoostEnabled, FlyEnabled, LongArmsEnabled, IsPlatformsEnabled, IsNoclipEnabled,
+                                 IsJoystickFly, IsGroundHelper, IsAmplifiedMonke, IsWebSlingers, 
+                                 IsLockOntoRig, IsHoldRig, IsRigGun, IsFreezeRig, IsTPGun, IsGetPIDGun,
+                                 IsMuteGun, IsMuteEveryoneExceptGun, IsReportGun, IsSilKick, IsTwerkingCarti,
+                                 IsCoolSword, IsTravis, IsPhone, IsAdminGrab, IsKormakur,
+                                 IsAxe, IsBigAssets, IsTv, IsUpsideDownHead, IsBackwardsHead,
+                                 IsAntiReportEnabled, IsGhostMonke, IsMenuRGB, IsInvisPlat, IsFunnyRig, IsRecroomTorso, IsRecroomRig, IsRealisticLooking, ShowHandCollider, AdminLaser;
 
-            // Refresh menu if it's open
-            if (isMenuCreated)
-            {
-                DestroyMenu();
-                CreateMenu();
-            }
-        }
-
-
-        public async Task GetVer() // all this web request is doing is getting the version from the github repo, its not downloading anything on to your computer, relax.
-        {
-            using HttpClient client = new HttpClient();
-            try
-            {
-                string url = "https://raw.githubusercontent.com/Literally-Reese-Literally/Cereal/refs/heads/main/Version";
-                menuversion = (await client.GetStringAsync(url)).Trim();
-            }
-            catch (HttpRequestException e)
-            {
-                Logger.LogInfo(e);
-            }
-        }
-
-        void Awake()
-        {
-            string dirPath = Path.Combine(BepInEx.Paths.GameRootPath, "Cereal");
-
-            // Ensure directory exists
-            Directory.CreateDirectory(dirPath);
-
-            instance = this;
-            Harmony harmony = new Harmony("Lexi.Cereal.Menu");
-            harmony.PatchAll();
-
-            Logger.LogInfo("Thank you");
-
-            PlatColorSave = Config.Bind("Settings", "PlatColorSave", Color.white, "Platform Color");
-            MenuColorSave = Config.Bind("Settings", "MenuColorSave", Color.white, "Menu Color");
-            TextColorSave = Config.Bind("Settings", "TextColorSave", Color.white, "Text Color");
-
-
-            FlySpeedSave = Config.Bind("Settings", "FlySpeedSave", 4f, "Fly Speed");
-            GhostColorSave = Config.Bind("Settings", "GhostColorSave", Color.white, "Ghost Monke Color");
-
-
-
-            SpeedBoostEnabled = Config.Bind("Movement", "Speed Boost", false, "A movement mod that lets you go really fast");
-            FlyEnabled = Config.Bind("Movement", "Fly", false, "A movement mod that lets you fly around the map like your superman");
-            LongArmsEnabled = Config.Bind("Movement", "Long Arms", false, "A movement mod that makes you seem very tall");
-            IsPlatformsEnabled = Config.Bind("Movement", "Platforms", false, "A movement mod that puts convient platforms under your hand when you hold grip");
-            IsNoclipEnabled = Config.Bind("Movement", "Noclip", false, "A movement mod that lets you go through stuff when holding right trigger");
-            IsJoystickFly = Config.Bind("Movement", "Joystick Fly", false, "A movement mod that lets you fly with your joystick");
-            IsLockOntoRig = Config.Bind("RigMods", "Lock Onto Rig", false, "A mod that locks you onto a rig");
-            IsHoldRig = Config.Bind("RigMods", "Hold Rig", false, "A mod that lets you hold your rig");
-            IsRigGun = Config.Bind("RigMods", "Rig Gun", false, "A mod that puts your rig where a gun is pointing");
-            IsFreezeRig = Config.Bind("RigMods", "Freeze Rig", false, "A mod that freezes your rig but keeps it following your player");
-            IsGetPIDGun = Config.Bind("Extras", "Get PID Gun", false, "A mod that copies someones Player id");
-            IsMuteGun = Config.Bind("Extras", "Mute Gun", false, "A mod that mutes someone");
-            IsMuteEveryoneExceptGun = Config.Bind("Extras", "Mute Others", false, "A mod that mutes everyone except a person");
-            IsReportGun = Config.Bind("Extras", "Report Gun", false, "A mod that reports someone");
-            IsGrayScreenEnabled = Config.Bind("Extras", "Gray Screen All", false, "A mod that makes everyones screen gray when masterclient.");
-
-
-            IsSilKick = Config.Bind("Admin", "SilKick", false, "silent kick");
-            IsTwerkingCarti = Config.Bind("Admin", "Twerking Carti", false, "twerking carti");
-            IsCoolSword = Config.Bind("Admin", "Cool sword", false, "cool sword");
-            IsTravis = Config.Bind("Admin", "travis", false, "travis scott");
-            IsAdminTp = Config.Bind("Admin", "admin tp", false, "admin tp");
-            IsPhone = Config.Bind("Admin", "phone", false, "phone");
-            IsAdminGrab = Config.Bind("Admin", "grab all", false, "grab all");
-            IsKormakur = Config.Bind("Admin", "kormakur", false, "kormakur");
-            IsAxe = Config.Bind("Admin", "axe", false, "axe");
-            IsBigAssets = Config.Bind("Admin", "big assets", false, "big assets");
-            IsTv = Config.Bind("Admin", "tv", false, "tv");
-
-
-            IsTPGun = Config.Bind("Movement", "Teleport Gun", false, "A mod that teleports you where a gun is pointed");
-            IsAntiReportEnabled = Config.Bind("Extras", "Anti Report", false, "A mod that kicks you from the room when someone tries to report you");
-            IsGhostMonke = Config.Bind("RigMods", "Ghost Monke", false, "A mod that freezes you when pressing A");
-            IsUpsideDownHead = Config.Bind("RigMods", "Upside Down Head", false, "A mod that makes your head upside down");
-            IsBackwardsHead = Config.Bind("RigMods", "Backwards Head", false, "A mod that makes your head backwards");
-
-            allCategories.Add(movementPages);
-            allCategories.Add(utilityPages);
-            allCategories.Add(RigModPages);
-            allCategories.Add(menuSettingPages);
-            allCategories.Add(modSettingPages);
-            allCategories.Add(adminPages);
-        }
-        // DO NOT REMOVE THIS! EVER! IT IS ALWAYS REQUIRED NO MATTER WHAT! THIS IS THE RIGPATCH, REMOVING IT WILL MAKE GHOST MONKE DETECTED AND IT **WILL** BAN YOU!
+        public ConfigEntry<Color> Theme;
+        public ConfigEntry<float> FlySpeedSave;
+        public bool IsAdmin = false;
         [HarmonyPatch(typeof(VRRig), "OnDisable")]
         internal class GhostPatch : MonoBehaviour
         {
@@ -231,13 +161,247 @@ namespace CerealMenu
         {
             public static bool Prefix(VRRig __instance) => !__instance.isLocal || __instance.enabled;
         }
-        // DO NOT REMOVE THIS! EVER! IT IS ALWAYS REQUIRED NO MATTER WHAT! THIS IS THE RIGPATCH, REMOVING IT WILL MAKE GHOST MONKE DETECTED AND IT **WILL** BAN YOU!
+        [HarmonyPatch(typeof(VRRig), nameof(VRRig.PostTick))]
+        public class TorsoPatch
+        {
+            private static Quaternion frozenRotation;
+            private static bool hasFrozenRotation = false;
+            public static event Action VRRigLateUpdate;
+            public static bool enabled;
+            public static int mode = 0;
+            private static float storedTorsoYaw;
+            private static bool hasStoredYaw = false;
+
+            public static void Postfix(VRRig __instance)
+            {
+                if (__instance.isLocal)
+                {
+                    if (enabled)
+                    {
+                        Quaternion rotation = Quaternion.identity;
+                        switch (mode)
+                        {
+                            case 0:
+                                rotation = Quaternion.Euler(0f, Time.time * 180f % 360, 0f);
+                                break;
+                            case 1:
+                                rotation = Quaternion.Euler(0f, UnityEngine.Random.Range(0f, 360f), 0f);
+                                break;
+                            case 2:
+                                rotation = Quaternion.Euler(0f, GorillaTagger.Instance.headCollider.transform.rotation.eulerAngles.y + 180f, 0f);
+                                break;
+                            case 3:
+                                rotation = Quaternion.Euler(0f, Mods.recBodyRotary.transform.rotation.eulerAngles.y, 0f);
+                                break;
+                            case 4:
+                                if (!hasFrozenRotation)
+                                {
+                                    frozenRotation = __instance.transform.rotation;
+                                    hasFrozenRotation = true;
+                                }
+
+                                rotation = frozenRotation;
+                                break;
+                            case 5:
+                                {
+                                    Transform a = GTPlayer.Instance.LeftHand.controllerTransform;
+                                    Transform b = GTPlayer.Instance.RightHand.controllerTransform;
+
+                                    Vector3 pos = __instance.transform.position;
+
+                                    Vector3 dirA = a.position - pos;
+                                    Vector3 dirB = b.position - pos;
+
+                                    dirA.y = 0f;
+                                    dirB.y = 0f;
+
+                                    dirA.Normalize();
+                                    dirB.Normalize();
+
+                                    Vector3 currentForward = __instance.transform.forward;
+                                    currentForward.y = 0f;
+                                    currentForward.Normalize();
+
+
+                                    float dot = Vector3.Dot(dirA, dirB);
+
+                                    Vector3 blendedDir;
+
+                                    if (dot < -0.5f)
+                                    {
+                                        float dotA = Vector3.Dot(currentForward, dirA);
+                                        float dotB = Vector3.Dot(currentForward, dirB);
+
+                                        blendedDir = (dotA > dotB) ? dirA : dirB;
+                                    }
+                                    else
+                                    {
+                                        blendedDir = dirA + dirB;
+                                    }
+
+                                    if (blendedDir.sqrMagnitude > 0.0001f)
+                                    {
+                                        blendedDir.Normalize();
+
+                                        float angle = Vector3.SignedAngle(currentForward, blendedDir, Vector3.up);
+
+                                        float maxAngle = 100f;
+                                        float clampedAngle = Mathf.Clamp(angle, -maxAngle, maxAngle);
+
+                                        Quaternion clampedRot = Quaternion.AngleAxis(clampedAngle, Vector3.up);
+                                        Vector3 finalForward = clampedRot * currentForward;
+
+                                        rotation = Quaternion.LookRotation(finalForward, Vector3.up);
+                                    }
+
+                                    break;
+                                }
+                            case 6:
+                                {
+                                    float deadzone = 40f;
+                                    float baseSpeed = 60f;
+                                    float maxSpeed = 960f;
+
+                                    float headYaw = GorillaTagger.Instance.headCollider.transform.rotation.eulerAngles.y;
+
+                                    Transform lefthand = GTPlayer.Instance.LeftHand.controllerTransform;
+                                    Transform righthand = GTPlayer.Instance.RightHand.controllerTransform;
+                                    Vector3 pos = __instance.transform.position;
+
+                                    Vector3 dirA = lefthand.position - pos;
+                                    Vector3 dirB = righthand.position - pos;
+
+                                    dirA.y = 0f;
+                                    dirB.y = 0f;
+
+                                    float handYaw = headYaw;
+
+                                    if (dirA.sqrMagnitude > 0.001f && dirB.sqrMagnitude > 0.001f)
+                                    {
+                                        dirA.Normalize();
+                                        dirB.Normalize();
+
+                                        Vector3 blended = dirA + dirB;
+
+                                        if (blended.sqrMagnitude > 0.001f)
+                                        {
+                                            blended.Normalize();
+                                            handYaw = Quaternion.LookRotation(blended, Vector3.up).eulerAngles.y;
+                                        }
+                                    }
+
+                                    float handWeight = 0.15f;
+
+                                    float targetYaw = Mathf.LerpAngle(headYaw, handYaw, handWeight);
+
+                                    if (!hasStoredYaw)
+                                    {
+                                        storedTorsoYaw = targetYaw;
+                                        hasStoredYaw = true;
+                                    }
+
+                                    float delta = Mathf.DeltaAngle(storedTorsoYaw, targetYaw);
+                                    float absDelta = Mathf.Abs(delta);
+
+                                    if (absDelta > deadzone)
+                                    {
+                                        float excess = absDelta - deadzone;
+
+                                        float speed = Mathf.Min(maxSpeed, baseSpeed * (excess / 30f));
+
+                                        storedTorsoYaw += Mathf.Sign(delta) * speed * Time.deltaTime;
+                                    }
+
+                                    rotation = Quaternion.Euler(0f, storedTorsoYaw, 0f);
+                                    break;
+                                }
+                        }
+                            if (mode != 4)
+                            {
+                                hasFrozenRotation = false;
+                            }
+                            if (mode != 6)
+                            {
+                            hasStoredYaw = false;
+                            }
+
+                        __instance.transform.rotation = rotation;
+                            __instance.head.MapMine(__instance.scaleFactor, __instance.playerOffsetTransform);
+                            __instance.leftHand.MapMine(__instance.scaleFactor, __instance.playerOffsetTransform);
+                            __instance.rightHand.MapMine(__instance.scaleFactor, __instance.playerOffsetTransform);
+                        }
+
+                        VRRigLateUpdate?.Invoke();
+                    }
+                }
+            }
+
+        void Awake()
+        {
+            LoadMenuAssetBundle();
+            instance = this;
+            string dirPath = Path.Combine(BepInEx.Paths.GameRootPath, "Cereal");
+            Directory.CreateDirectory(dirPath);
+
+            Harmony harmony = new Harmony(PluginInfo.GUID);
+            harmony.PatchAll();
+
+            Theme = Config.Bind("Settings", "Theme", Color.white, "");
+            FlySpeedSave = Config.Bind("Settings", "FlySpeedSave", 4f, "");
+
+            IsMenuRGB = Config.Bind("Settings", "Rgb Mode", false, "");
+            IsInvisPlat = Config.Bind("Settings", "Invis Plats", false, "");
+            ShowHandCollider = Config.Bind("Settings", "Show Hand Collider", true, "");
+
+            SpeedBoostEnabled = Config.Bind("Movement", "Speed Boost", false, "");
+            FlyEnabled = Config.Bind("Movement", "Fly", false, "");
+            LongArmsEnabled = Config.Bind("Movement", "Long Arms", false, "");
+            IsPlatformsEnabled = Config.Bind("Movement", "Platforms", false, "");
+            IsNoclipEnabled = Config.Bind("Movement", "Noclip", false, "");
+            IsJoystickFly = Config.Bind("Movement", "Joystick Fly", false, "");
+            IsGroundHelper = Config.Bind("Movement", "Ground Helper", false, "");
+            IsAmplifiedMonke = Config.Bind("Movement", "Amplified Monke", false, "");
+            IsWebSlingers = Config.Bind("Movement", "Web Slingers", false, "");
+            IsTPGun = Config.Bind("Movement", "Teleport Gun", false, "");
+
+            IsGhostMonke = Config.Bind("Rig", "Ghost Monke", false, "");
+            IsLockOntoRig = Config.Bind("Rig", "Lock Rig", false, "");
+            IsHoldRig = Config.Bind("Rig", "Hold Rig", false, "");
+            IsRigGun = Config.Bind("Rig", "Rig Gun", false, "");
+            IsFreezeRig = Config.Bind("Rig", "Freeze Rig", false, "");
+            IsUpsideDownHead = Config.Bind("Rig", "Upside Down Head", false, "");
+            IsBackwardsHead = Config.Bind("Rig", "Backwards Head", false, "");
+            IsFunnyRig = Config.Bind("Rig", "Funny Rig", false, "");
+            IsRecroomTorso = Config.Bind("Rig", "Recroom Torso", false, "");
+            IsRecroomRig = Config.Bind("Rig", "Recroom Rig", false, "");
+            IsRealisticLooking = Config.Bind("Rig", "Realistic Looking", false, "");
+
+            IsGetPIDGun = Config.Bind("Utility", "Get PID Gun", false, "");
+            IsMuteGun = Config.Bind("Utility", "Mute Gun", false, "");
+            IsMuteEveryoneExceptGun = Config.Bind("Utility", "Mute Others", false, "");
+            IsReportGun = Config.Bind("Utility", "Report Gun", false, "");
+            IsAntiReportEnabled = Config.Bind("Utility", "Anti Report", false, "");
+
+            IsSilKick = Config.Bind("Admin", "SilKick", false, "");
+            IsTwerkingCarti = Config.Bind("Admin", "Twerking Carti", false, "");
+            IsCoolSword = Config.Bind("Admin", "Cool Sword", false, "");
+            IsTravis = Config.Bind("Admin", "Travis Scott", false, "");
+            IsPhone = Config.Bind("Admin", "Phone", false, "");
+            IsAdminGrab = Config.Bind("Admin", "Grab All", false, "");
+            IsKormakur = Config.Bind("Admin", "Kormakur", false, "");
+            IsAxe = Config.Bind("Admin", "Axe", false, "");
+            IsBigAssets = Config.Bind("Admin", "Big Assets", false, "");
+            IsTv = Config.Bind("Admin", "TV", false, "");
+            AdminLaser = Config.Bind("Admin", "Laser", false, "");
+
+            audioSource = gameObject.GetComponent<AudioSource>() ?? gameObject.AddComponent<AudioSource>();
+            LoadSound();
+        }
+
         void Start()
         {
-            isMenuCreated = false;
-            _ = GetVer();
+            _ = Getver();
             gameObject.AddComponent<GunLib>();
-
             if (NotiLib.Instance == null)
             {
                 var notiObj = new GameObject("NotiLib");
@@ -246,750 +410,525 @@ namespace CerealMenu
             }
             Console.LoadConsole();
         }
-        void OnJoinedRoom()
+
+        public void EnableAdminMenu()
         {
-            Mods.RefreshRigCache();
+            IsAdmin = true;
+            if (isMenuCreated) RefreshMenu();
         }
         void Update()
         {
-            if (pageSwitchcooldown > 0)
-            {
-                pageSwitchcooldown -= Time.deltaTime;
-            }
-            if (!isMenuCreated && ControllerInputPoller.instance.leftControllerSecondaryButton && !string.IsNullOrEmpty(menuversion) && menuversion == PluginInfo.Version)
+            if (globalClickCooldown > 0) globalClickCooldown -= Time.deltaTime;
+            if (ControllerInputPoller.instance.leftControllerSecondaryButton && !isMenuCreated)
             {
                 CreateMenu();
             }
-            else if (isMenuCreated && !ControllerInputPoller.instance.leftControllerSecondaryButton)
+            if (!ControllerInputPoller.instance.leftControllerSecondaryButton && isMenuCreated)
             {
-                DestroyMenu();
-            }
-            if (ControllerInputPoller.instance.leftControllerSecondaryButton && !string.IsNullOrEmpty(menuversion) && menuversion != PluginInfo.Version)
-            {
-                NotiLib.SendNotification("Your menu is out of date! Please update!");
+                DestroyMenu(false);
             }
 
-            // Here is mod code
-
-
-            if (!string.IsNullOrEmpty(menuversion) && menuversion == PluginInfo.Version)
+            if (SpeedBoostEnabled.Value) Mods.SpeedBoost();
+            if (FlyEnabled.Value) Mods.Fly();
+            if (LongArmsEnabled.Value) Mods.LongArms();
+            if (IsPlatformsEnabled.Value) Mods.Platforms();
+            if (IsMuteGun.Value) Mods.MuteGun();
+            if (IsReportGun.Value) Mods.ReportGun();
+            if (IsGhostMonke.Value) Mods.GhostMonke();
+            if (IsBackwardsHead.Value) Mods.BackwardsHead();
+            if (IsUpsideDownHead.Value) Mods.UpsideDownNeck();
+            if (IsNoclipEnabled.Value) Mods.Noclip();
+            if (IsJoystickFly.Value) Mods.JoystickFly();
+            if (IsLockOntoRig.Value) Mods.LockOntoRig();
+            if (IsHoldRig.Value) Mods.HoldRig();
+            if (IsRigGun.Value) Mods.RigGun();
+            if (IsFreezeRig.Value) Mods.FreezeRig();
+            if (IsTPGun.Value) Mods.TPGun();
+            if (IsGetPIDGun.Value) Mods.GetPID();
+            if (IsMuteEveryoneExceptGun.Value) Mods.MuteEveryoneExceptGun();
+            if (IsSilKick.Value) Mods.silkickgun();
+            if (IsAntiReportEnabled.Value) Mods.AntiReport();
+            if (IsTwerkingCarti.Value) Mods.TwerkingCarti();
+            if (IsCoolSword.Value) Mods.Sword();
+            if (IsTravis.Value) Mods.TravisScott();
+            if (IsPhone.Value) Mods.Samsung();
+            if (IsAdminGrab.Value) Mods.AdminGrabAll();
+            if (IsKormakur.Value) Mods.KormakurFemboys();
+            if (IsAxe.Value) Mods.Axe();
+            if (IsTv.Value) Mods.SkidTV();
+            if (IsGroundHelper.Value) Mods.GroundHelper();
+            if (IsAmplifiedMonke.Value) Mods.AmplifiedMonke();
+            if (IsWebSlingers.Value) Mods.WebSlingers();
+            if (IsFunnyRig.Value) Mods.MessUpRig();
+            if (IsRecroomTorso.Value) Mods.RecRoomTorso();
+            if (IsRecroomRig.Value) Mods.RecRoomRig();
+            if (IsRealisticLooking.Value) Mods.RealLooking();
+            if (AdminLaser.Value) Mods.AdminLaser();
+            Mods.CreatePlayerOutline();
+            if (menuObj != null)
             {
-                if (SpeedBoostEnabled.Value) Mods.SpeedBoost();
-                if (FlyEnabled.Value) Mods.Fly();
-                if (LongArmsEnabled.Value) Mods.LongArms();
-                if (!LongArmsEnabled.Value) Mods.UnLongArms();
-                if (IsPlatformsEnabled.Value) Mods.Platforms();
-                if (IsGrayScreenEnabled.Value && !HasGrayScreened)
-                {
-                    Mods.ActivateGrayAll();
-                    HasGrayScreened = true;
-                }
-                if (IsAntiReportEnabled.Value) Mods.AntiReport();
-                if (!IsGrayScreenEnabled.Value && HasGrayScreened)
-                {
-                    Mods.DeactivateGrayAll();
-                    HasGrayScreened = false;
-                }
-                if (IsMuteGun.Value) Mods.MuteGun();
-                if (IsReportGun.Value) Mods.ReportGun();
-                if (IsGhostMonke.Value) Mods.GhostMonke();
-                if (IsBackwardsHead.Value) Mods.BackwardsHead();
-                if (IsUpsideDownHead.Value) Mods.UpsideDownNeck();
-                if (IsNoclipEnabled.Value) Mods.Noclip();
-                if (IsJoystickFly.Value) Mods.JoystickFly();
-                if (IsLockOntoRig.Value) Mods.LockOntoRig();
-                if (IsHoldRig.Value) Mods.HoldRig();
-                if (IsRigGun.Value) Mods.RigGun();
-                if (IsFreezeRig.Value) Mods.FreezeRig();
-                if (IsTPGun.Value) Mods.TPGun();
-                if (IsGetPIDGun.Value) Mods.GetPID();
-                if (IsMuteEveryoneExceptGun.Value) Mods.MuteEveryoneExceptGun();
-                if (IsSilKick.Value) Mods.silkickgun();
-                if (IsTwerkingCarti.Value) Mods.TwerkingCarti();
-                if (IsCoolSword.Value) Mods.Sword();
-                if (IsTravis.Value) Mods.TravisScott();
-                if (IsAdminTp.Value) Mods.AdminTPAll();
-                if (IsPhone.Value) Mods.Samsung();
-                if (IsAdminGrab.Value) Mods.AdminGrabAll();
-                if (IsKormakur.Value) Mods.KormakurFemboys();
-                if (IsAxe.Value) Mods.Axe();
-                if (IsTv.Value) Mods.SkidTV();
-                Mods.CreatePlayerOutline();
-            }
+                Vector3 parentScale = GorillaLocomotion.GTPlayer.Instance.LeftHand.controllerTransform.lossyScale;
 
-            // DONT REMOVE
+                Vector3 desired = new Vector3(1.24208f, 13.04792f, 15.86129f);
+
+                menuObj.transform.localScale = new Vector3(
+                    desired.x / parentScale.x,
+                    desired.y / parentScale.y,
+                    desired.z / parentScale.z
+                );
+            }
         }
+
         public void CreateMenu()
         {
             var player = GorillaLocomotion.GTPlayer.Instance;
             isMenuCreated = true;
-            menuObj = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            menuObj.transform.parent = player.LeftHand.controllerTransform;
-            menuObj.transform.localPosition = Vector3.zero;
-            menuObj.transform.localRotation = Quaternion.identity;
-            menuObj.transform.localScale = new Vector3(0.03f, 0.21f, 0.45f);
 
-            var textObject = new GameObject("MenuLabel");
-            textObject.transform.SetParent(menuObj.transform);
-            textObject.transform.localPosition = new Vector3(0.55f, 0f, 0.45f);
-            textObject.transform.localRotation = Quaternion.Euler(0f, -90f, -90f);
-
-            var text = textObject.AddComponent<TextMeshPro>();
-            text.text = "Cereal";
-            text.fontSize = 28;
-            text.alignment = TextAlignmentOptions.Center;
-            if (MenuColorSave.Value == Color.white)
+            if (menuPrefab != null)
             {
-                text.color = Color.black;
-            }
-            else if (MenuColorSave.Value == Color.black)
-            {
-                text.color = Color.white;
+                menuObj = Instantiate(menuPrefab);
             }
             else
             {
-                text.color = Color.white;
+                menuObj = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                menuObj.transform.localScale = new Vector3(0.03f, 0.21f, 0.45f);
             }
-            text.enableAutoSizing = true;
-            text.rectTransform.sizeDelta = new Vector2(50f, 40f);
-            text.transform.localScale = new Vector3(0.016f, 0.01f, 0.01f);
 
+            menuObj.transform.parent = player.LeftHand.controllerTransform;
+            menuObj.transform.localPosition = menuForwardOffset;
+            menuObj.transform.localRotation = Quaternion.identity;
 
-            Destroy(menuObj.GetComponent<Rigidbody>());
-            Destroy(menuObj.GetComponent<Collider>());
+            Transform backBtn = menuObj.transform.Find("Back");
+            Transform forwardBtn = menuObj.transform.Find("Forwards");
+
+            GameObject backObj = backBtn != null ? backBtn.gameObject : null;
+            GameObject forwardObj = forwardBtn != null ? forwardBtn.gameObject : null;
+
+            Transform Disconnect = menuObj.transform.Find("Disconnect");
+
+            GameObject DisconnectObj = Disconnect != null ? Disconnect.gameObject : null;
+            Transform Home = menuObj.transform.Find("Home");
+            GameObject HomeObj = Home != null ? Home.gameObject : null;
+
+            void SetupNavButton(GameObject obj)
+            {
+                if (obj == null) return;
+
+                obj.layer = 2;
+
+                var rb = obj.GetComponent<Rigidbody>() ?? obj.AddComponent<Rigidbody>();
+                rb.isKinematic = true;
+                rb.useGravity = false;
+
+                var col = obj.GetComponent<Collider>();
+                if (col != null) col.isTrigger = true;
+
+                var rend = obj.GetComponent<Renderer>();
+                if (rend != null)
+                {
+                    rend.material.shader = Shader.Find("GorillaTag/UberShader");
+                    rend.material.color = Theme.Value;
+
+                    if (IsMenuRGB.Value)
+                    {
+                        StartCoroutine(RGBTheme(rend));
+                    }
+                }
+
+                var bc = obj.GetComponent<ButtonCollider>() ?? obj.AddComponent<ButtonCollider>();
+
+                bc.OnPressed = null;
+            }
+
+            SetupNavButton(backObj);
+            SetupNavButton(forwardObj);
+            SetupNavButton(DisconnectObj);
+            SetupNavButton(HomeObj);
+
+            if (backObj != null)
+            {
+                backObj.GetComponent<ButtonCollider>().OnPressed = () =>
+                {
+                    currentPageIndex = Mathf.Max(0, currentPageIndex - 1);
+                    RefreshMenu();
+                };
+            }
+
+            if (forwardObj != null)
+            {
+                forwardObj.GetComponent<ButtonCollider>().OnPressed = () =>
+                {
+                    currentPageIndex = Mathf.Min(Pages - 1, currentPageIndex + 1);
+                    RefreshMenu();
+                };
+            }
+            if (DisconnectObj != null)
+            {
+                DisconnectObj.GetComponent<ButtonCollider>().OnPressed = () =>
+                {
+                    PhotonNetwork.Disconnect();
+                };
+            }
+            if (HomeObj != null)
+            {
+                HomeObj.GetComponent<ButtonCollider>().OnPressed = () =>
+                {
+                    SwitchPage(-1, 0);
+                };
+            }
+
+            Transform titleTransform = menuObj.transform.Find("Title");
+
+            if (titleTransform != null)
+            {
+                var text = titleTransform.GetComponent<TextMeshPro>();
+                if (text != null)
+                {
+                    text.text = currentCategoryIndex == -1 ? "Cereal" + " [" + (currentPageIndex + 1) + "]" : GetCategoryName(currentCategoryIndex) + " [" + (currentPageIndex + 1) + "]";
+                    text.color = Theme.Value == Color.white ? Color.black : Color.white;
+
+                    if (text.fontSharedMaterial != null)
+                    {
+                        text.fontSharedMaterial.shader = Shader.Find("TextMeshPro/Distance Field");
+                    }
+                }
+            }
+            else
+            {
+                UnityEngine.Debug.LogWarning("Prefab not found");
+            }
+            Transform BackText = menuObj.transform.Find(":3");
+            if (BackText != null)
+            {
+                var text = BackText.GetComponent<TextMeshPro>();
+                if (text.fontSharedMaterial != null)
+                {
+                    text.fontSharedMaterial.shader = Shader.Find("TextMeshPro/Distance Field");
+                }
+            }
+
+            if (menuObj.GetComponent<Rigidbody>()) Destroy(menuObj.GetComponent<Rigidbody>());
+            if (menuObj.GetComponent<Collider>()) Destroy(menuObj.GetComponent<Collider>());
 
             var rend = menuObj.GetComponent<Renderer>();
-            rend.material.shader = Shader.Find("GorillaTag/UberShader");
-            rend.material.color = MenuColorSave.Value;
-            // Hand Trigger
+            if (rend != null)
+            {
+                rend.material.shader = Shader.Find("GorillaTag/UberShader");
+                rend.material.color = Theme.Value;
+                if (IsMenuRGB.Value) rgbCoroutine = StartCoroutine(RGBTheme(rend));
+            }
+
             HandMenuCollider = GameObject.CreatePrimitive(PrimitiveType.Sphere);
             HandMenuCollider.transform.parent = player.RightHand.controllerTransform;
             HandMenuCollider.transform.localPosition = Vector3.down * 0.094f;
-            HandMenuCollider.transform.localRotation = Quaternion.identity;
+            HandMenuCollider.layer = 2;
             HandMenuCollider.transform.localScale = new Vector3(0.008f, 0.008f, 0.008f);
             Destroy(HandMenuCollider.GetComponent<Rigidbody>());
-            var rendhand = HandMenuCollider.GetComponent<Renderer>();
-            rendhand.material.shader = Shader.Find("GorillaTag/UberShader");
-            rendhand.material.color = Color.white;
-            // Hand Trigger
+
+            if (ShowHandCollider.Value)
+            {
+                var rendhand = HandMenuCollider.GetComponent<Renderer>();
+                rendhand.material.shader = Shader.Find("GorillaTag/UberShader");
+                rendhand.material.color = Color.white;
+            }
+
+            float zOffset = 0.06f;
+            float step = 0.05f;
+
             if (currentCategoryIndex == -1)
             {
-                float zOffset = 0.15f;
-                foreach (string catName in catagoryName)
+                Pages = 2;
+                if (currentPageIndex == 0)
                 {
-                    AddButton(zOffset, 0f, 0.2f, catName);
-                    zOffset -= 0.05f;
+                    AddButton(zOffset, 0f, 0.2f, "Movement", () => SwitchPage(0, 0)); zOffset -= step;
+                    AddButton(zOffset, 0f, 0.2f, "Utility", () => SwitchPage(1, 0)); zOffset -= step;
+                    AddButton(zOffset, 0f, 0.2f, "Rig Mods", () => SwitchPage(2, 0)); zOffset -= step;
+                    AddButton(zOffset, 0f, 0.2f, "Settings", () => SwitchPage(3, 0)); zOffset -= step;
                 }
-
-                AddButton(0.3f, 0f, 0.2f, "Disconnect");
+                else
+                {
+                    AddButton(zOffset, 0f, 0.2f, "Important", () => SwitchPage(4, 0)); zOffset -= step;
+                    AddButton(zOffset, 0f, 0.2f, "Fun", () => SwitchPage(5, 0)); zOffset -= step;
+                    if (IsAdmin)
+                    {
+                        AddButton(zOffset, 0f, 0.2f, "Admin", () => SwitchPage(6, 0)); zOffset -= step;
+                    }
+                }
             }
             else
             {
-                List<string> currentButtons = allCategories[currentCategoryIndex][currentPageIndex];
-                float zOffset2 = 0.15f;
+                // AddButton(zOffset, 0f, 0.2f, "⌂", () => SwitchPage(-1, 0));
+                // zOffset -= step;
 
-                foreach (string btnName in currentButtons)
+                switch (currentCategoryIndex)
                 {
-                    AddButton(zOffset2, 0f, 0.2f, btnName);
-                    zOffset2 -= 0.05f;
+                    case 0:
+                        Pages = 3;
+                        if (currentPageIndex == 0)
+                        {
+                            AddToggleButton(ref zOffset, step, "Speed Boost", SpeedBoostEnabled);
+                            AddToggleButton(ref zOffset, step, "Fly", FlyEnabled);
+                            AddToggleButton(ref zOffset, step, "Platforms", IsPlatformsEnabled);
+                            AddToggleButton(ref zOffset, step, "Joystick Fly", IsJoystickFly);
+                        }
+                        else if (currentPageIndex == 1)
+                        {
+                            AddToggleButton(ref zOffset, step, "Long Arms", LongArmsEnabled, () => Mods.UnLongArms());
+                            AddToggleButton(ref zOffset, step, "Ground Helper", IsGroundHelper);
+                            AddToggleButton(ref zOffset, step, "Amplified Monke", IsAmplifiedMonke);
+                            AddToggleButton(ref zOffset, step, "Noclip", IsNoclipEnabled);
+                        }
+                        else
+                        {
+                            AddToggleButton(ref zOffset, step, "Web Slingers", IsWebSlingers);
+                            AddToggleButton(ref zOffset, step, "Teleport Gun", IsTPGun);
+                        }
+                            break;
+
+                    case 1:
+                        Pages = 2;
+                        if (currentPageIndex == 0)
+                        {
+                            AddToggleButton(ref zOffset, step, "Get PID Gun", IsGetPIDGun);
+                            AddToggleButton(ref zOffset, step, "Mute Gun", IsMuteGun);
+                            AddToggleButton(ref zOffset, step, "Mute Others", IsMuteEveryoneExceptGun);
+                            AddToggleButton(ref zOffset, step, "Report Gun", IsReportGun);
+                        }
+                        else
+                        {
+                            AddButton(zOffset, 0f, 0.2f, "Mute All", () => Mods.MuteAll()); zOffset -= step;
+                            AddButton(zOffset, 0f, 0.2f, "Unmute All", () => Mods.UnmuteAll()); zOffset -= step;
+                        }
+                        break;
+
+                    case 2:
+                        Pages = 3;
+                        if (currentPageIndex == 0)
+                        {
+                            AddToggleButton(ref zOffset, step, "Ghost Monke", IsGhostMonke);
+                            AddToggleButton(ref zOffset, step, "Lock Rig", IsLockOntoRig);
+                            AddToggleButton(ref zOffset, step, "Hold Rig", IsHoldRig);
+                            AddToggleButton(ref zOffset, step, "Rig Gun", IsRigGun);
+                        }
+                        else if (currentPageIndex == 1)
+                        {
+                            AddToggleButton(ref zOffset, step, "Freeze Rig", IsFreezeRig);
+                            AddToggleButton(ref zOffset, step, "Upside Down Head", IsUpsideDownHead, () => Mods.FixRig());
+                            AddToggleButton(ref zOffset, step, "Backwards Head", IsBackwardsHead, () => Mods.FixRig());
+                            AddToggleButton(ref zOffset, step, "funny rig", IsFunnyRig, () => Mods.FixRig());
+                        }
+                        else
+                        {
+                            AddToggleButton(ref zOffset, step, "Recroom Torso", IsRecroomTorso, () => Mods.FixRig());
+                            AddToggleButton(ref zOffset, step, "Recroom Rig", IsRecroomRig, () => Mods.FixRig());
+                            AddToggleButton(ref zOffset, step, "Realistic Looking", IsRealisticLooking, () => Mods.FixRig());
+                        }
+                        break;
+
+                    case 3:
+                        Pages = 3;
+                        if (currentPageIndex == 0)
+                        {
+                            AddToggleButton(ref zOffset, step, "Invis Plats", IsInvisPlat);
+                            AddToggleButton(ref zOffset, step, "Menu RGB", IsMenuRGB);
+                            AddButton(zOffset, 0f, 0.2f, "Theme Gray", () => { Theme.Value = Color.gray; RefreshMenu(); }); zOffset -= step;
+                            AddButton(zOffset, 0f, 0.2f, "Theme Black", () => { Theme.Value = Color.black; RefreshMenu(); }); zOffset -= step;
+                        }
+                        else if (currentPageIndex == 1)
+                        {
+                            AddButton(zOffset, 0f, 0.2f, "Theme Blue", () => { Theme.Value = Color.lightSkyBlue; RefreshMenu(); }); zOffset -= step;
+                            AddButton(zOffset, 0f, 0.2f, "Theme Red", () => { Theme.Value = Color.red; RefreshMenu(); }); zOffset -= step;
+                            AddToggleButton(ref zOffset, step, "Show Hand Collider", ShowHandCollider);
+                            AddButton(zOffset, 0f, 0.2f, "Fly Speed +", () => { FlySpeedSave.Value += 0.1f; NotiLib.SendNotification(FlySpeedSave.Value.ToString("0.0"), 2000); });
+                        }
+                        else
+                        {
+                            AddButton(zOffset, 0f, 0.2f, "Fly Speed -", () => { FlySpeedSave.Value -= 0.1f; NotiLib.SendNotification(FlySpeedSave.Value.ToString("0.0"), 2000); });
+                        }
+                            break;
+                    case 4:
+                        Pages = 1;
+                        AddButton(zOffset, 0f, 0.2f, "Reauthenticate", () => MothershipAuthenticator.Instance.BeginLoginFlow()); zOffset -= step;
+                        AddToggleButton(ref zOffset, step, "Anti Report", IsAntiReportEnabled);
+                        break;
+                    case 5:
+                        Pages = 1;
+                        AddButton(zOffset, 0f, 0.2f, "Unlock all cosmetics (CS)", () => Cosmetx.PluginCosmetx.instance.ActivateCosmetx()); zOffset -= step;
+                        break;
+                    case 6:
+                        Pages = 4;
+                        if (currentPageIndex == 0)
+                        {
+                            AddToggleButton(ref zOffset, step, "Silent Kick Gun", IsSilKick);
+                            AddToggleButton(ref zOffset, step, "Admin Laser", AdminLaser);
+                            AddToggleButton(ref zOffset, step, "Travis Scott", IsTravis, () => Mods.NoTravis());
+                            AddToggleButton(ref zOffset, step, "Tv", IsTv, () => Mods.NoTv());
+                        }
+                        else if (currentPageIndex == 1)
+                        {
+                            AddToggleButton(ref zOffset, step, "Phone", IsPhone, () => Mods.NoSamsung());
+                            AddToggleButton(ref zOffset, step, "Twerking Carti", IsTwerkingCarti, () => Mods.NoCarti());
+                            AddToggleButton(ref zOffset, step, "Grab All", IsAdminGrab);
+                            AddToggleButton(ref zOffset, step, "Roblox Sword", IsCoolSword, () => Mods.NoSword());
+                        }
+                        else if (currentPageIndex == 2)
+                        {
+                            AddToggleButton(ref zOffset, step, "Kormakur sign", IsKormakur, () => Mods.NoSign());
+                            AddButton(zOffset, 0f, 0.2f, "Vid Hell", () => Mods.Video = "https://github.com/ChipLikesCereal/testvid/raw/refs/heads/main/GirlHell1999.mp4"); zOffset -= step;
+                            AddButton(zOffset, 0f, 0.2f, "Vid OCD", () => Mods.Video = "https://github.com/ChipLikesCereal/testvid/raw/refs/heads/main/OCD.mp4"); zOffset -= step;
+                            AddButton(zOffset, 0f, 0.2f, "Vid Kitty", () => Mods.Video = "https://github.com/ChipLikesCereal/testvid/raw/refs/heads/main/OCD.mp4"); zOffset -= step;
+                        }
+                        else
+                        {
+                            AddButton(zOffset, 0f, 0.2f, "Vid AMV", () => Mods.Video = "https://github.com/ChipLikesCereal/testvid/raw/refs/heads/main/testvid.mp4"); zOffset -= step;
+                        }
+                            break;
                 }
 
-                AddButton(0.3f, 0f, 0.2f, "Disconnect");
-                // AddButton(-0.1f, 0.153f, 0.1f, "Back");
-                AddButton(-0.15f, 0.06f, 0.1f, "Previous");
-                AddButton(-0.15f, -0.06f, 0.1f, "Next");
+                float navY = 0.08f;
             }
-        }
-        public void DestroyMenu()
-        {
-            isMenuCreated = false;
-            GameObject.Destroy(menuObj);
-            GameObject.Destroy(HandMenuCollider);
-            DestroyAllButtons();
-            Plugin.instance.Config.Save();
-        }
-        public void NextPage()
-        {
-            List<List<string>> currentCategory = allCategories[currentCategoryIndex];
-            currentPageIndex = (currentPageIndex + 1) % currentCategory.Count;
-            DestroyMenu();
-            CreateMenu();
-        }
-        public void PreviousPage()
-        {
-            List<List<string>> currentCategory = allCategories[currentCategoryIndex];
-            currentPageIndex = (currentPageIndex - 1 + currentCategory.Count) % currentCategory.Count;
-            DestroyMenu();
-            CreateMenu();
-        }
-        void AddButton(float zoffset, float yOffset, float sOffset, string btnName)
-        {
-            GameObject btnObj = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            var player = GorillaLocomotion.GTPlayer.Instance;
-            var follow = btnObj.AddComponent<FollowMenu>();
-            follow.target = player.LeftHand.controllerTransform;
-            follow.position = new Vector3(0.015f, yOffset, zoffset);
-            follow.rotation = Quaternion.identity;
-            btnObj.transform.localScale = new Vector3(0.03f, sOffset, 0.04f);
-            var rend = btnObj.GetComponent<Renderer>();
-            rend.material.shader = Shader.Find("GorillaTag/UberShader");
-            rend.material.color = Color.black;
-            btnObj.GetComponent<Collider>().isTrigger = true;
-            btnObj.layer = 2;
-            var trigger = btnObj.AddComponent<ButtonCollider>();
-            trigger.btnIdentifier = btnName;
-            var textObject = new GameObject("ButtonLabel");
-            textObject.transform.SetParent(btnObj.transform);
-            textObject.transform.localPosition = new Vector3(0.55f, 0f, 0f);
-            textObject.transform.localRotation = Quaternion.Euler(0f, -90f, -90f);
 
-            var text = textObject.AddComponent<TextMeshPro>();
-            text.text = btnName;
-            text.alignment = TextAlignmentOptions.Center;
-            text.color = TextColorSave.Value;
-            text.enableAutoSizing = true;
-            text.rectTransform.sizeDelta = new Vector2(50f, 40f);
-            if (btnName == "Previous" || btnName == "Next") // btnName == "Back" (I dont know why I commented this)
-            {
-                textObject.transform.localScale = new Vector3(0.02f, 0.05f, 0.04f);
-            }
-            else if (btnName == "Set Menu White" || btnName == "Set Ghost White" || btnName == "Upside Down Head" || btnName == "Backwards Head" || btnName == "Set Menu Black" || btnName == "Set Ghost Black" || btnName == "kormakur femboy")
-            {
-                textObject.transform.localScale = textObject.transform.localScale = new Vector3(0.007f, 0.06f, 0.37f);
-            }
-            else
-            {
-                textObject.transform.localScale = new Vector3(0.01f, 0.09f, 0.40f);
-            }
-            btnObjs.Add(btnObj);
-        }
-        void DestroyAllButtons()
-        {
             foreach (GameObject btnObj in btnObjs)
             {
-                Destroy(btnObj);
+                if (btnObj != null)
+                {
+                    btnObj.layer = 2;
+                    btnObj.GetComponent<Collider>().isTrigger = true;
+                }
             }
         }
+
+        private string GetCategoryName(int index) => index switch { 0 => "Movement", 1 => "Utility", 2 => "Rig Mods", 3 => "Settings", 4 => "Important", 5 => "Fun", 6 => "Admin", _ => "Cereal" };
+        private void SwitchPage(int cat, int page) { currentCategoryIndex = cat; currentPageIndex = page; RefreshMenu(); }
+        public void RefreshMenu() { DestroyMenu(true); CreateMenu(); currentPageIndex = Mathf.Clamp(currentPageIndex, 0, Mathf.Max(0, Pages - 1));}
+
+        public void DestroyMenu(bool refresh)
+        {
+            isMenuCreated = false;
+            if (menuObj != null)
+            {
+                if (!refresh)
+                {
+                    menuObj.transform.SetParent(null);
+                    Rigidbody rb = menuObj.AddComponent<Rigidbody>();
+                    rb.isKinematic = false; rb.useGravity = true;
+                    rb.AddForce(Vector3.down * 0.5f, ForceMode.Impulse);
+                }
+                if (IsMenuRGB.Value && rgbCoroutine != null) StopCoroutine(rgbCoroutine);
+                Destroy(menuObj, refresh ? 0 : 5f);
+            }
+            if (HandMenuCollider != null) Destroy(HandMenuCollider);
+            foreach (var b in btnObjs) { if (!refresh && b != null) { b.GetComponent<FollowMenu>().target = null;b.AddComponent<Rigidbody>().AddForce(Vector3.down * 0.5f, ForceMode.Impulse); Destroy(b, 5f); } else Destroy(b); }
+            btnObjs.Clear();
+            Config.Save();
+        }
+
+        void AddToggleButton(ref float z, float step, string name, ConfigEntry<bool> entry, Action onDisable = null, Action onEnable = null)
+        {
+            AddButton(z, 0f, 0.2f, entry.Value ? $"[ON] {name}" : name, () => {
+                entry.Value = !entry.Value;
+                if (entry.Value) onEnable?.Invoke();
+                else onDisable?.Invoke();
+                RefreshMenu();
+            });
+            z -= step;
+        }
+
+        void AddButton(float z, float y, float s, string name, Action act)
+        {
+            GameObject btn = null;
+            if (menuBundle != null)
+            {
+                GameObject buttonPrefab = menuBundle.LoadAsset<GameObject>("Assets/Button.prefab");
+
+                if (buttonPrefab != null)
+                {
+                    btn = Instantiate(buttonPrefab);
+                }
+                else
+                {
+                    Logger.LogError("prefab not found");
+                }
+            }
+
+            if (btn == null)
+            {
+                btn = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                btn.transform.localScale = new Vector3(0.03f, s, 0.04f);
+            }
+
+            var f = btn.GetComponent<FollowMenu>() ?? btn.AddComponent<FollowMenu>();
+            f.target = GorillaLocomotion.GTPlayer.Instance.LeftHand.controllerTransform;
+            f.position = new Vector3(0.015f, y, z) + menuForwardOffset;
+            f.rotationOffset = Quaternion.Euler(90f, 0f, 0f);
+
+            var renderer = btn.GetComponent<Renderer>();
+            if (renderer != null)
+            {
+                renderer.material.shader = Shader.Find("GorillaTag/UberShader");
+                if (!IsMenuRGB.Value)
+                    btn.GetComponent<Renderer>().material.color = Theme.Value;
+                else
+                {
+                    StartCoroutine(RGBTheme(btn.GetComponent<Renderer>()));
+                }
+            }
+
+            var collider = btn.GetComponent<Collider>();
+            if (collider != null)
+            {
+                collider.isTrigger = true;
+            }
+
+            btn.layer = 2;
+
+            var c = btn.GetComponent<ButtonCollider>() ?? btn.AddComponent<ButtonCollider>();
+            c.OnPressed = act;
+
+            TextMeshPro t = null;
+            Transform textTransform = btn.transform.Find("Text");
+
+            if (textTransform != null)
+            {
+                t = textTransform.GetComponent<TextMeshPro>();
+            }
+
+            if (t == null)
+            {
+                var tObj = new GameObject("Text");
+                tObj.transform.SetParent(btn.transform);
+                tObj.transform.localPosition = new Vector3(0.55f, 0f, 0f);
+                tObj.transform.localRotation = Quaternion.Euler(0f, -90f, -90f);
+
+                t = tObj.AddComponent<TextMeshPro>();
+            }
+            t.text = name;
+            t.color = Color.white;
+
+
+            btnObjs.Add(btn);
+        }
+
+        public void PlayClickSound() { if (soundReady && cachedClip != null) audioSource.PlayOneShot(cachedClip); }
+       
+        async Task Getver() { try { menuversion = (await new HttpClient().GetStringAsync("https://raw.githubusercontent.com/ChipLikesCereal/Cereal/refs/heads/main/Version")).Trim(); } catch { } }
+        public IEnumerator RGBTheme(Renderer r) { while (true) { float t = Time.time * 2f; r.material.color = new Color(Mathf.Sin(t) * 0.5f + 0.5f, Mathf.Sin(t + 2f) * 0.5f + 0.5f, Mathf.Sin(t + 4f) * 0.5f + 0.5f); yield return null; } }
+
         public class FollowMenu : MonoBehaviour
         {
             public Transform target;
             public Vector3 position;
-            public Quaternion rotation;
+            public Quaternion rotationOffset = Quaternion.identity;
 
             void LateUpdate()
             {
-                transform.position = target.TransformPoint(position);
-                transform.rotation = target.rotation * rotation;
-            }
-        }
-
-        public class ButtonCollider : MonoBehaviour
-        {
-            public string btnIdentifier;
-            public bool isTogglable;
-            public bool isToggled;
-
-            void Start()
-            {
-                // Initialize toggle state based on plugin config
-                switch (btnIdentifier)
+                if (target)
                 {
-                    case "Speed Boost":
-                        isTogglable = true;
-                        isToggled = Plugin.instance.SpeedBoostEnabled.Value;
-                        break;
-                    case "Fly":
-                        isTogglable = true;
-                        isToggled = Plugin.instance.FlyEnabled.Value;
-                        break;
-                    case "Long Arms":
-                        isTogglable = true;
-                        isToggled = Plugin.instance.LongArmsEnabled.Value;
-                        break;
-                    case "Platforms":
-                        isTogglable = true;
-                        isToggled = Plugin.instance.IsPlatformsEnabled.Value;
-                        break;
-                    case "Noclip":
-                        isTogglable = true;
-                        isToggled = Plugin.instance.IsNoclipEnabled.Value;
-                        break;
-                    case "Joystick Fly":
-                        isTogglable = true;
-                        isToggled = Plugin.instance.IsJoystickFly.Value;
-                        break;
-                    case "Follow Rig":
-                        isTogglable = true;
-                        isToggled = Plugin.instance.IsLockOntoRig.Value;
-                        break;
-                    case "Rig Gun":
-                        isTogglable = true;
-                        isToggled = Plugin.instance.IsRigGun.Value;
-                        break;
-                    case "Hold Rig":
-                        isTogglable = true;
-                        isToggled = Plugin.instance.IsHoldRig.Value;
-                        break;
-                    case "Freeze Rig":
-                        isTogglable = true;
-                        isToggled = Plugin.instance.IsFreezeRig.Value;
-                        break;
-                    case "Gray Screen All":
-                        isTogglable = true;
-                        isToggled = Plugin.instance.IsGrayScreenEnabled.Value;
-                        break;
-                    case "TP Gun":
-                        isTogglable = true;
-                        isToggled = Plugin.instance.IsTPGun.Value;
-                        break;
-                    case "Get PID Gun":
-                        isTogglable = true;
-                        isToggled = Plugin.instance.IsGetPIDGun.Value;
-                        break;
-                    case "Mute Gun":
-                        isTogglable = true;
-                        isToggled = Plugin.instance.IsMuteGun.Value;
-                        break;
-                    case "Mute Others":
-                        isTogglable = true;
-                        isToggled = Plugin.instance.IsMuteEveryoneExceptGun.Value;
-                        break;
-                    case "Report Gun":
-                        isTogglable = true;
-                        isToggled = Plugin.instance.IsReportGun.Value;
-                        break;
-                    case "Anti Report":
-                        isTogglable = true;
-                        isToggled = Plugin.instance.IsAntiReportEnabled.Value;
-                        break;
-                    case "Ghost Monke":
-                        isTogglable = true;
-                        isToggled = Plugin.instance.IsGhostMonke.Value;
-                        break;
-                    case "Upside Down Head":
-                        isTogglable = true;
-                        isToggled = Plugin.instance.IsUpsideDownHead.Value;
-                        break;
-                    case "Backwards Head":
-                        isTogglable = true;
-                        isToggled = Plugin.instance.IsBackwardsHead.Value;
-                        break;
-                    case "kick":
-                        isTogglable = true;
-                        isToggled = Plugin.instance.IsSilKick.Value;
-                        break;
-                    case "twerking carti":
-                        isTogglable = true;
-                        isToggled = Plugin.instance.IsTwerkingCarti.Value;
-                        break;
-                    case "cool sword":
-                        isTogglable = true;
-                        isToggled = Plugin.instance.IsCoolSword.Value;
-                        break;
-                    case "travis scott":
-                        isTogglable = true;
-                        isToggled = Plugin.instance.IsTravis.Value;
-                        break;
-                    case "admin tp":
-                        isTogglable = true;
-                        isToggled = Plugin.instance.IsAdminTp.Value;
-                        break;
-                    case "phone":
-                        isTogglable = true;
-                        isToggled = Plugin.instance.IsPhone.Value;
-                        break;
-                    case "admin grab":
-                        isTogglable = true;
-                        isToggled = Plugin.instance.IsAdminGrab.Value;
-                        break;
-                    case "kormakur femboy":
-                        isTogglable = true;
-                        isToggled = Plugin.instance.IsKormakur.Value;
-                        break;
-                    case "axe":
-                        isTogglable = true;
-                        isToggled = Plugin.instance.IsAxe.Value;
-                        break;
-                    case "big assets":
-                        isTogglable = true;
-                        isToggled = Plugin.instance.IsBigAssets.Value;
-                        break;
-                    case "tv":
-                        isTogglable = true;
-                        isToggled = Plugin.instance.IsTv.Value;
-                        break;
-                    default:
-                        isTogglable = false;
-                        isToggled = false;
-                        break;
-                }
-
-                // Set initial color
-                GetComponent<Renderer>().material.color = isToggled ? Color.blue : Color.black;
-            }
-
-            void OnTriggerEnter(Collider other)
-            {
-                // Only respond if hand collider touches
-                if (other.gameObject == Plugin.instance.HandMenuCollider)
-                {
-                    if (Plugin.instance.pageSwitchcooldown > 0) return;
-
-                    if (isTogglable)
-                    {
-                        isToggled = !isToggled;
-                        GetComponent<Renderer>().material.color = isToggled ? Color.blue : Color.black;
-                    }
-
-                    HandleButtonAction();
-                    Plugin.instance.pageSwitchcooldown = 0.4f;
-                }
-            }
-
-            void HandleButtonAction()
-            {
-                switch (btnIdentifier)
-                {
-                    case "Speed Boost":
-                        Plugin.instance.SpeedBoostEnabled.Value = isToggled;
-                        NotiLib.SendNotification("Makes you really fast");
-                        Plugin.instance.Config.Save();
-                        
-                        break;
-                    case "Fly":
-                        Plugin.instance.FlyEnabled.Value = isToggled;
-                        NotiLib.SendNotification("Lets You Fly");
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "Long Arms":
-                        Plugin.instance.LongArmsEnabled.Value = isToggled;
-                        NotiLib.SendNotification("Makes your arms longer");
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "Platforms":
-                        Plugin.instance.IsPlatformsEnabled.Value = isToggled;
-                        NotiLib.SendNotification("Spawns convient platforms under your hands when you press your grips");
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "Noclip":
-                        Plugin.instance.IsNoclipEnabled.Value = isToggled;
-                        NotiLib.SendNotification("Lets you go through stuff");
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "Joystick Fly":
-                        Plugin.instance.IsJoystickFly.Value = isToggled;
-                        NotiLib.SendNotification("Bark fly");
-                        if (Plugin.instance.IsJoystickFly.Value)
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "Follow Rig":
-                        Plugin.instance.IsLockOntoRig.Value = isToggled;
-                        NotiLib.SendNotification("Makes you follow a rig");
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "Rig Gun":
-                        Plugin.instance.IsRigGun.Value = isToggled;
-                        NotiLib.SendNotification("Puts your rig where a gun is pointed");
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "Freeze Rig":
-                        Plugin.instance.IsFreezeRig.Value = isToggled;
-                        NotiLib.SendNotification("Freezes your rig but keeps it following your player");
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "Hold Rig":
-                        Plugin.instance.IsHoldRig.Value = isToggled;
-                        NotiLib.SendNotification("Lets you hold your rig");
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "TP Gun":
-                        Plugin.instance.IsTPGun.Value = isToggled;
-                        NotiLib.SendNotification("Teleports you where a gun is pointed");
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "Get PID Gun":
-                        Plugin.instance.IsGetPIDGun.Value = isToggled;
-                        NotiLib.SendNotification("Gets someones player id");
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "Mute Gun":
-                        Plugin.instance.IsMuteGun.Value = isToggled;
-                        NotiLib.SendNotification("Mutes Someone");
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "Mute Others":
-                        Plugin.instance.IsMuteEveryoneExceptGun.Value = isToggled;
-                        NotiLib.SendNotification("Mutes everyone except the selected person");
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "Mute all":
-                        Mods.MuteAll();
-                        NotiLib.SendNotification("Mutes all");
-                        break;
-                    case "Unmute all":
-                        Mods.UnmuteAll();
-                        NotiLib.SendNotification("Unmutes all");
-                        break;
-                    case "Report Gun":
-                        Plugin.instance.IsReportGun.Value = isToggled;
-                        NotiLib.SendNotification("Reports Someone");
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "Gray Screen All":
-                        Plugin.instance.IsGrayScreenEnabled.Value = isToggled;
-                        NotiLib.SendNotification("Makes everyones screen gray");
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "Anti Report":
-                        Plugin.instance.IsAntiReportEnabled.Value = isToggled;
-                        NotiLib.SendNotification("Disconnects you when someone tries to report you");
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "Ghost Monke":
-                        Plugin.instance.IsGhostMonke.Value = isToggled;
-                        NotiLib.SendNotification("Makes you appear frozen when you press A");
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "Upside Down Head":
-                        Plugin.instance.IsUpsideDownHead.Value = isToggled;
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "Backwards Head":
-                        Plugin.instance.IsBackwardsHead.Value = isToggled;
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "Fix Head":
-                        Mods.FixHead();
-                        break;
-                    case "Set Plat Blue":
-                        Plugin.instance.PlatColorSave.Value = Color.blue;
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "Set Plat Red":
-                        Plugin.instance.PlatColorSave.Value = Color.red;
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "Set Plat White":
-                        Plugin.instance.PlatColorSave.Value = Color.white;
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "Set Plat Black":
-                        Plugin.instance.PlatColorSave.Value = Color.black;
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "Set Menu Blue":
-                        Plugin.instance.MenuColorSave.Value = Color.blue;
-                        Plugin.instance.Config.Save();
-                        Plugin.instance.DestroyMenu();
-                        Plugin.instance.CreateMenu();
-                        break;
-                    case "Set Menu Red":
-                        Plugin.instance.MenuColorSave.Value = Color.red;
-                        Plugin.instance.Config.Save();
-                        Plugin.instance.DestroyMenu();
-                        Plugin.instance.CreateMenu();
-                        break;
-                    case "Set Menu White":
-                        Plugin.instance.MenuColorSave.Value = Color.white;
-                        Plugin.instance.Config.Save();
-                        Plugin.instance.DestroyMenu();
-                        Plugin.instance.CreateMenu();
-                        break;
-                    case "Set Menu Black":
-                        Plugin.instance.MenuColorSave.Value = Color.black;
-                        Plugin.instance.Config.Save();
-                        Plugin.instance.DestroyMenu();
-                        Plugin.instance.CreateMenu();
-                        break;
-                    case "Set Text Blue":
-                        Plugin.instance.TextColorSave.Value = Color.blue;
-                        Plugin.instance.Config.Save();
-                        Plugin.instance.DestroyMenu();
-                        Plugin.instance.CreateMenu();
-                        break;
-                    case "Set Text Red":
-                        Plugin.instance.TextColorSave.Value = Color.red;
-                        Plugin.instance.Config.Save();
-                        Plugin.instance.DestroyMenu();
-                        Plugin.instance.CreateMenu();
-                        break;
-                    case "Set Text White":
-                        Plugin.instance.TextColorSave.Value = Color.white;
-                        Plugin.instance.Config.Save();
-                        Plugin.instance.DestroyMenu();
-                        Plugin.instance.CreateMenu();
-                        break;
-
-
-                    case "Set Ghost Blue":
-                        Plugin.instance.GhostColorSave.Value = Color.blue;
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "Set Ghost Red":
-                        Plugin.instance.GhostColorSave.Value = Color.red;
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "Set Ghost White":
-                        Plugin.instance.GhostColorSave.Value = Color.white;
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "Set Ghost Black":
-                        Plugin.instance.GhostColorSave.Value = Color.black;
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "Fly Speed +":
-                        Plugin.instance.FlySpeedSave.Value += 0.1f;
-                        NotiLib.SendNotification(Plugin.instance.FlySpeedSave.Value.ToString());
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "Fly Speed -":
-                        if (Plugin.instance.FlySpeedSave.Value > 0.1)
-                            Plugin.instance.FlySpeedSave.Value -= 0.1f;
-                        NotiLib.SendNotification(Plugin.instance.FlySpeedSave.Value.ToString());
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "Next":
-                        Plugin.instance.NextPage();
-                        break;
-                    case "Previous":
-                        Plugin.instance.PreviousPage();
-                        break;
-                    case "Movement":
-                        Plugin.instance.currentCategoryIndex = 0;
-                        Plugin.instance.currentPageIndex = 0;
-                        Plugin.instance.DestroyMenu();
-                        Plugin.instance.CreateMenu();
-                        break;
-                    case "Utility":
-                        Plugin.instance.currentCategoryIndex = 1;
-                        Plugin.instance.currentPageIndex = 0;
-                        Plugin.instance.DestroyMenu();
-                        Plugin.instance.CreateMenu();
-                        break;
-                    case "Rig Mods":
-                        Plugin.instance.currentCategoryIndex = 2;
-                        Plugin.instance.currentPageIndex = 0;
-                        Plugin.instance.DestroyMenu();
-                        Plugin.instance.CreateMenu();
-                        break;
-                    case "Menu Settings":
-                        Plugin.instance.currentCategoryIndex = 3;
-                        Plugin.instance.currentPageIndex = 0;
-                        Plugin.instance.DestroyMenu();
-                        Plugin.instance.CreateMenu();
-                        break;
-                    case "Mod Settings":
-                        Plugin.instance.currentCategoryIndex = 4;
-                        Plugin.instance.currentPageIndex = 0;
-                        Plugin.instance.DestroyMenu();
-                        Plugin.instance.CreateMenu();
-                        break;
-                    case "Admin":
-                        if (Plugin.instance.IsAdmin)
-                        {
-                            Plugin.instance.currentCategoryIndex = 5;
-                            Plugin.instance.currentPageIndex = 0;
-                            Plugin.instance.DestroyMenu();
-                            Plugin.instance.CreateMenu();
-                        }
-                        break;
-                    case "Back":
-                        Plugin.instance.currentCategoryIndex = -1;
-                        Plugin.instance.currentPageIndex = 0;
-                        Plugin.instance.DestroyMenu();
-                        Plugin.instance.CreateMenu();
-                        break;
-                    case "kick":
-                        Plugin.instance.IsSilKick.Value = isToggled;
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "twerking carti":
-                        Plugin.instance.IsTwerkingCarti.Value = isToggled;
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "cool sword":
-                        Plugin.instance.IsCoolSword.Value = isToggled;
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "no carti":
-                        Mods.NoCarti();
-                        break;
-                    case "no sword":
-                        Mods.NoSword();
-                        break;
-                    case "travis scott":
-                        Plugin.instance.IsTravis.Value = isToggled;
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "no travis":
-                        Mods.NoTravis();
-                        break;
-                    case "admin tp":
-                        Plugin.instance.IsAdminTp.Value = isToggled;
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "phone":
-                        Plugin.instance.IsPhone.Value = isToggled;
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "no phone":
-                        Mods.NoSamsung();
-                        break;
-                    case "admin grab":
-                        Plugin.instance.IsAdminGrab.Value = isToggled;
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "kormakur femboy":
-                        Plugin.instance.IsKormakur.Value = isToggled;
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "axe":
-                        Plugin.instance.IsAxe.Value = isToggled;
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "no axe":
-                        Mods.NoAxe();
-                        break;
-                    case "no kormakur":
-                        Mods.NoSign();
-                        break;
-                    case "vid ocd":
-                        Mods.Video = "https://github.com/ChipLikesCereal/testvid/raw/refs/heads/main/OCD.mp4";
-                        break;
-                    case "vid girl hell":
-                        Mods.Video = "https://github.com/ChipLikesCereal/testvid/raw/refs/heads/main/GirlHell1999.mp4";
-                        break;
-                    case "vid amv":
-                        Mods.Video = "https://github.com/ChipLikesCereal/testvid/raw/refs/heads/main/testvid.mp4";
-                        break;
-                    case "vid kitty":
-                        Mods.Video = "https://github.com/ChipLikesCereal/testvid/raw/refs/heads/main/Kitty.mp4";
-                        break;
-                    case "vid furry":
-                        Mods.Video = "https://files.hamburbur.org/ZlothYLocura.mov";
-                        break;
-                    case "no indicator":
-                        Mods.NoIndicator();
-                        break;
-                    case "show indicator":
-                        Mods.ShowIndicator();
-                        break;
-                    case "big assets":
-                        Plugin.instance.IsBigAssets.Value = isToggled;
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "tv":
-                        Plugin.instance.IsTv.Value = isToggled;
-                        Plugin.instance.Config.Save();
-                        break;
-                    case "no tv":
-                        Mods.NoTv();
-                        break;
-                    case "Disconnect":
-                        Photon.Pun.PhotonNetwork.Disconnect();
-                        break;
+                    transform.position = target.TransformPoint(position);
+                    transform.rotation = target.rotation * rotationOffset;
                 }
             }
         }
+        public class ButtonCollider : MonoBehaviour { public Action OnPressed; public void Press() { if (Plugin.instance.globalClickCooldown > 0) return; Plugin.instance.globalClickCooldown = 0.4f; Plugin.instance.PlayClickSound(); OnPressed?.Invoke(); } private void OnTriggerEnter(Collider other) { if (other.gameObject == Plugin.instance.HandMenuCollider) Press(); } }
     }
 }

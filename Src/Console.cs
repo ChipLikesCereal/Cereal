@@ -39,7 +39,7 @@ namespace CerealMenu
 
         public static bool DisableMenu;
 
-        public static void SendNotification(string text, int sendTime = 1000) { NotiLib.SendNotification(text); } // Put your notify code here
+        public static void SendNotification(string text, int sendTime = 2000) { NotiLib.SendNotification(text, sendTime); } // Put your notify code here
 
         public static void TeleportPlayer(Vector3 position) // Only modify this if you need any special logic
         {

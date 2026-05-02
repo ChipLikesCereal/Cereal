@@ -9,12 +9,19 @@ namespace CerealMenu.Cosmetx
     public class PluginCosmetx : BaseUnityPlugin
     {
         public static PluginCosmetx instance;
+        public bool hasActivated = false;
         void Awake()
         {
             instance = this;
-            HarmonyPatches.ApplyHarmonyPatches();
         }
+        public void ActivateCosmetx()
+        {
+            if (!hasActivated)
+            HarmonyPatches.ApplyHarmonyPatches();
 
+            UnlockCosmetics();
+            hasActivated = true;
+        }
         public void UnlockCosmetics()
         {
             MethodInfo UnlockItem = typeof(CosmeticsController).GetMethod("UnlockItem", BindingFlags.Instance | BindingFlags.NonPublic);

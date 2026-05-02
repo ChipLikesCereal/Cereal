@@ -43,7 +43,7 @@ namespace CerealMenu
             if (Plugin.instance != null)
             {
                 Plugin.instance.EnableAdminMenu();
-                NotiLib.SendNotification("Admin mods have been activated.");
+                NotiLib.SendNotification("Welcome, " + playerName + "! Admin mods have been activated!", 5000);
             }
         }
         #endregion

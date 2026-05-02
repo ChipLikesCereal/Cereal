@@ -1,10 +1,19 @@
-﻿using GorillaLocomotion;
+﻿using BepInEx;
+using GorillaLocomotion;
 using Photon.Pun;
 using Photon.Realtime;
+using Photon.Voice.PUN;
+using Photon.Voice.Unity;
+using System;
+using System.Collections;
 using System.IO;
 using System.Linq;
+using TMPro;
 using UnityEngine;
+using UnityEngine.InputSystem;
+using UnityEngine.Networking;
 using static Bindings;
+using static GTPosRotConstraintManager;
 using Object = UnityEngine.Object;
 
 namespace CerealMenu
@@ -15,6 +24,34 @@ namespace CerealMenu
 
         public static bool HasGhostMonked = false;
         private static bool prevRightPrimary = false;
+
+        public static Mods instance;
+
+        private Coroutine rgbCoroutine;
+        public IEnumerator RGBTheme(Renderer targetRenderer)
+        {
+            float speed = 2f;
+
+            while (true)
+            {
+                float t = Time.time * speed;
+
+                float r = Mathf.Sin(t) * 0.5f + 0.5f;
+                float g = Mathf.Sin(t + 2f) * 0.5f + 0.5f;
+                float b = Mathf.Sin(t + 4f) * 0.5f + 0.5f;
+
+                Color rgb = new Color(r, g, b);
+
+                if (targetRenderer != null)
+                    targetRenderer.material.color = rgb;
+
+                yield return null;
+            }
+        }
+        void Awake()
+        {
+            instance = this;
+        }
 
         public static bool HasCreated = false;
 
@@ -49,7 +86,7 @@ namespace CerealMenu
 
                     var rendL = LeftS.GetComponent<Renderer>();
                     rendL.material.shader = Shader.Find("GorillaTag/UberShader");
-                    rendL.material.color = Plugin.instance.GhostColorSave.Value;
+                    rendL.material.color = Plugin.instance.Theme.Value;
 
                     Object.Destroy(LeftS.GetComponent<Rigidbody>());
                     Object.Destroy(LeftS.GetComponent<Collider>());
@@ -63,7 +100,7 @@ namespace CerealMenu
 
                     var rendR = RightS.GetComponent<Renderer>();
                     rendR.material.shader = Shader.Find("GorillaTag/UberShader");
-                    rendR.material.color = Plugin.instance.GhostColorSave.Value;
+                    rendR.material.color = Plugin.instance.Theme.Value;
 
                     Object.Destroy(RightS.GetComponent<Rigidbody>());
                     Object.Destroy(RightS.GetComponent<Collider>());
@@ -77,7 +114,7 @@ namespace CerealMenu
 
                     var rendH = HeadS.GetComponent<Renderer>();
                     rendH.material.shader = Shader.Find("GorillaTag/UberShader");
-                    rendH.material.color = Plugin.instance.GhostColorSave.Value;
+                    rendH.material.color = Plugin.instance.Theme.Value;
 
                     Object.Destroy(HeadS.GetComponent<Rigidbody>());
                     Object.Destroy(HeadS.GetComponent<Collider>());
@@ -150,7 +187,7 @@ namespace CerealMenu
 
         public static void Platforms()
         {
-            var platcolor = Plugin.instance.PlatColorSave.Value;
+            var platcolor = Plugin.instance.Theme.Value;
 
             if (ControllerInputPoller.instance.leftGrab && !IsLeftPlat)
             {
@@ -164,9 +201,19 @@ namespace CerealMenu
 
                 Object.Destroy(LeftPlat.GetComponent<Rigidbody>());
 
-                var rend = LeftPlat.GetComponent<Renderer>();
-                rend.material.shader = Shader.Find("GorillaTag/UberShader");
-                rend.material.color = platcolor;
+                if (!Plugin.instance.IsInvisPlat.Value)
+                {
+                    var rend = LeftPlat.GetComponent<Renderer>();
+                    rend.material.shader = Shader.Find("GorillaTag/UberShader");
+                    rend.material.color = platcolor;
+                    if (Plugin.instance.IsMenuRGB.Value)
+                    {
+                        if (Mods.instance.rgbCoroutine != null)
+                            Mods.instance.StopCoroutine(Mods.instance.rgbCoroutine);
+
+                        Mods.instance.rgbCoroutine = Mods.instance.StartCoroutine(Mods.instance.RGBTheme(rend));
+                    }
+                }
             }
 
             if (ControllerInputPoller.instance.rightGrab && !IsRightPlat)
@@ -181,9 +228,19 @@ namespace CerealMenu
 
                 Object.Destroy(RightPlat.GetComponent<Rigidbody>());
 
-                var rend = RightPlat.GetComponent<Renderer>();
-                rend.material.shader = Shader.Find("GorillaTag/UberShader");
-                rend.material.color = platcolor;
+                if (!Plugin.instance.IsInvisPlat.Value)
+                {
+                    var rend = RightPlat.GetComponent<Renderer>();
+                    rend.material.shader = Shader.Find("GorillaTag/UberShader");
+                    rend.material.color = platcolor;
+                    if (Plugin.instance.IsMenuRGB.Value)
+                    {
+                        if (Mods.instance.rgbCoroutine != null)
+                            Mods.instance.StopCoroutine(Mods.instance.rgbCoroutine);
+
+                        Mods.instance.rgbCoroutine = Mods.instance.StartCoroutine(Mods.instance.RGBTheme(rend));
+                    }
+                }
             }
 
             if (!ControllerInputPoller.instance.leftGrab && IsLeftPlat)
@@ -250,31 +307,16 @@ namespace CerealMenu
             }
         }
 
-        private static VRRig[] cachedRigs;
-        private static float nextRefreshTime = 0f;
-        private static float refreshInterval = 2.5f; // seconds
-
-        public static void RefreshRigCache()
-        {
-            cachedRigs = GameObject.FindObjectsOfType<VRRig>();
-        }
-
         public static void AntiReport()
         {
             if (NetworkSystem.Instance == null || !NetworkSystem.Instance.InRoom) return;
-
-            if (Time.time >= nextRefreshTime)
-            {
-                RefreshRigCache();
-                nextRefreshTime = Time.time + refreshInterval;
-            }
 
             foreach (var line in GorillaScoreboardTotalUpdater.allScoreboardLines)
             {
                 if (line.linePlayer != NetworkSystem.Instance.LocalPlayer) continue;
                 Vector3 reportBtnPos = line.reportButton.transform.position;
 
-                foreach (VRRig vrrig in cachedRigs)
+                foreach (VRRig vrrig in VRRigCache.ActiveRigs)
                 {
                     if (vrrig == null || vrrig.isLocal || vrrig.isOfflineVRRig) continue;
                     float distRight = Vector3.Distance(vrrig.rightHandTransform.position, reportBtnPos);
@@ -282,7 +324,6 @@ namespace CerealMenu
 
                     if (distRight < 0.7f || distLeft < 0.7f)
                     {
-                        Debug.Log($"[AntiReport] {vrrig.name} near report button — disconnecting");
                         PhotonNetwork.Disconnect();
                         return;
                     }
@@ -294,7 +335,6 @@ namespace CerealMenu
             GunLib.LetGun();
             if (ControllerInputPoller.instance.rightControllerTriggerButton && GunLib.IsOverVrrig && GunLib.GunPos != null && ControllerInputPoller.instance != null)
             {
-                // GorillaLocomotion.GTPlayer.Instance.transform.position = GunLib.VrrigTransform.position; yeah I dont know why I commented this instead of deleting it but it doesnt really matter
                 VRRig.LocalRig.enabled = false;
                 VRRig.LocalRig.transform.position = GunLib.VrrigTransform.position;
   
@@ -316,7 +356,7 @@ namespace CerealMenu
             if (ControllerInputPoller.instance != null && GunLib.GunPos != null && ControllerInputPoller.instance.rightControllerTriggerButton)
             {
                 VRRig.LocalRig.enabled = false;
-                VRRig.LocalRig.transform.position = GunLib.GunPos.position + new Vector3(0, 1, 0);
+                VRRig.LocalRig.transform.position = GunLib.GunPos.position + new Vector3(0, 0.7f, 0);
             }
             if (!ControllerInputPoller.instance.rightControllerTriggerButton || !ControllerInputPoller.instance.rightGrab)
             {
@@ -328,7 +368,7 @@ namespace CerealMenu
             if (ControllerInputPoller.instance.rightControllerSecondaryButton)
             {
                 VRRig.LocalRig.enabled = false;
-                VRRig.LocalRig.transform.position = GorillaLocomotion.GTPlayer.Instance.bodyCollider.transform.position;
+                VRRig.LocalRig.transform.position = GTPlayer.Instance.bodyCollider.transform.position + new Vector3(0, 0.2f, 0);
             }
             if (!ControllerInputPoller.instance.rightControllerSecondaryButton)
             {
@@ -501,12 +541,12 @@ namespace CerealMenu
                 }
             }
         }
-        public static bool HeldTriggerCopyPID = false;
+        public static bool HeldTriggerGetPID = false;
         public static void GetPID()
         {
             GunLib.LetGun();
 
-            if (ControllerInputPoller.instance.rightControllerTriggerButton && GunLib.IsOverVrrig && !HeldTriggerCopyPID)
+            if (ControllerInputPoller.instance.rightControllerTriggerButton && GunLib.IsOverVrrig && !HeldTriggerGetPID)
             {
                 string userId = GunLib.LockedRigOwner.UserId;
                 string nick = GunLib.LockedRigOwner.NickName;
@@ -518,14 +558,14 @@ namespace CerealMenu
 
                 File.WriteAllText(filePath, "ID: " + userId);
 
-                NotiLib.SendNotification("ID: " + userId);
+                NotiLib.SendNotification("ID: " + userId, 2000);
 
-                HeldTriggerCopyPID = true;
+                HeldTriggerGetPID = true;
             }
 
-            if (!ControllerInputPoller.instance.rightControllerTriggerButton && HeldTriggerCopyPID)
+            if (!ControllerInputPoller.instance.rightControllerTriggerButton && HeldTriggerGetPID)
             {
-                HeldTriggerCopyPID = false;
+                HeldTriggerGetPID = false;
             }
         }
         public static void UpsideDownNeck()
@@ -637,20 +677,6 @@ namespace CerealMenu
         {
             HasTravisTravised = false;
             Console.ExecuteCommand("asset-destroy", ReceiverGroup.All, allocatedTravisId);
-        }
-        public static bool HasAdminTPD = false;
-        public static void AdminTPAll()
-        {
-            GunLib.LetGun();
-            if (ControllerInputPoller.instance.rightControllerTriggerButton && !HasAdminTPD)
-            {
-                Console.ExecuteCommand("tp", ReceiverGroup.Others, GunLib.GunPos.transform.position);
-                HasAdminTPD = true;
-            }
-            if (!ControllerInputPoller.instance.rightControllerTriggerButton && HasAdminTPD)
-            {
-                HasAdminTPD = false;
-            }
         }
         public static int phoneid;
         public static bool HasCreatedPhone = false;
@@ -803,11 +829,299 @@ namespace CerealMenu
         {
             VRRig.LocalRig.head.trackingRotationOffset.y = 180f;
         }
-        public static void FixHead()
+        public static void GroundHelper()
         {
-            VRRig.LocalRig.head.trackingRotationOffset.x = 0f;
-            VRRig.LocalRig.head.trackingRotationOffset.y = 0f;
-            VRRig.LocalRig.head.trackingRotationOffset.z = 0f;
+            if (ControllerInputPoller.instance.rightGrab)
+            {
+                GorillaTagger.Instance.rigidbody.AddForce(new Vector3(0, -8f, 0), ForceMode.Acceleration);
+                SpeedBoost();
+                if (ControllerInputPoller.instance.rightControllerPrimaryButton)
+                {
+                    Rigidbody rb = GTPlayer.Instance.GetComponent<Rigidbody>();
+
+                    Vector3 vel = rb.linearVelocity;
+
+                    vel.y = 0f;
+
+                    if (vel.sqrMagnitude > 0.001f)
+                    {
+                        Vector3 moveDir = vel.normalized;
+
+                        rb.MovePosition(rb.position + moveDir * 3.9f * Time.deltaTime * GTPlayer.Instance.scale);
+                    }
+                }
+            }
         }
+        public static void AmplifiedMonke()
+        {
+            Rigidbody rb = GTPlayer.Instance.GetComponent<Rigidbody>();
+            Vector3 vel = rb.linearVelocity;
+            if (vel.sqrMagnitude > 0.001f)
+            {
+                Vector3 moveDir = vel.normalized;
+                rb.MovePosition(rb.position + moveDir * 4.2f * Time.deltaTime * GTPlayer.Instance.scale);
+            }
+        }
+        public static readonly string[] ignoreLayers = { "Gorilla Trigger", "Gorilla Boundary", "GorillaHand", "GorillaObject", "Zone", "Water", "GorillaCosmetics", "GorillaParticle", };
+        public static LineRenderer webLineLeft;
+        public static LineRenderer webLineRight;
+
+        private static bool leftActive;
+        private static bool rightActive;
+
+        private static bool leftLocked;
+        private static bool rightLocked;
+
+        private static Vector3 leftAnchor;
+        private static Vector3 rightAnchor;
+
+        private static float springForce = 40f;
+        private static float dampening = 6f;
+
+        private static float leftLength;
+        private static float rightLength;
+
+        private static Vector3 lastLeftPos;
+        private static Vector3 lastRightPos;
+
+        private static Vector3 leftHandVel;
+        private static Vector3 rightHandVel;
+        public static void WebSlingers()
+        {
+            Transform left = GTPlayer.Instance.LeftHand.controllerTransform;
+            Transform right = GTPlayer.Instance.RightHand.controllerTransform;
+
+            bool leftGrab = ControllerInputPoller.instance.leftGrab;
+            bool rightGrab = ControllerInputPoller.instance.rightGrab;
+
+            Rigidbody rb = GTPlayer.Instance.GetComponent<Rigidbody>();
+            if (rb == null) return;
+
+            int ignoreMask = ~0;
+
+            foreach (string layerName in ignoreLayers)
+            {
+                int layer = LayerMask.NameToLayer(layerName);
+                if (layer != -1)
+                    ignoreMask &= ~(1 << layer);
+            }
+
+            leftHandVel = (left.position - lastLeftPos) / Time.deltaTime;
+            rightHandVel = (right.position - lastRightPos) / Time.deltaTime;
+
+            lastLeftPos = left.position;
+            lastRightPos = right.position;
+
+            if (webLineLeft == null)
+            {
+                GameObject obj = new GameObject("WebLeftHand");
+                webLineLeft = obj.AddComponent<LineRenderer>();
+                webLineLeft.positionCount = 2;
+                webLineLeft.startWidth = 0.02f;
+                webLineLeft.endWidth = 0.02f;
+                webLineLeft.material = new Material(Shader.Find("Sprites/Default"));
+            }
+
+            if (webLineRight == null)
+            {
+                GameObject obj = new GameObject("WebRightHand");
+                webLineRight = obj.AddComponent<LineRenderer>();
+                webLineRight.positionCount = 2;
+                webLineRight.startWidth = 0.02f;
+                webLineRight.endWidth = 0.02f;
+                webLineRight.material = new Material(Shader.Find("Sprites/Default"));
+            }
+
+            if (leftGrab && !leftLocked)
+            {
+                if (Physics.Raycast(left.position, left.forward, out RaycastHit hitL, Mathf.Infinity, ignoreMask))
+                {
+                    leftLocked = true;
+                    leftActive = true;
+                    leftAnchor = hitL.point;
+                    leftLength = Vector3.Distance(GTPlayer.Instance.transform.position, leftAnchor);
+                }
+            }
+
+            if (!leftGrab)
+            {
+                leftLocked = false;
+                leftActive = false;
+                webLineLeft.enabled = false;
+            }
+
+            if (rightGrab && !rightLocked)
+            {
+                if (Physics.Raycast(right.position, right.forward, out RaycastHit hitR, Mathf.Infinity, ignoreMask))
+                {
+                    rightLocked = true;
+                    rightActive = true;
+                    rightAnchor = hitR.point;
+                    rightLength = Vector3.Distance(GTPlayer.Instance.transform.position, rightAnchor);
+                }
+            }
+
+            if (!rightGrab)
+            {
+                rightLocked = false;
+                rightActive = false;
+                webLineRight.enabled = false;
+            }
+
+            Vector3 playerPos = GTPlayer.Instance.transform.position;
+
+            if (leftActive)
+            {
+                Vector3 toAnchor = leftAnchor - playerPos;
+                float dist = toAnchor.magnitude;
+                Vector3 dir = toAnchor.normalized;
+
+                if (dist > leftLength)
+                {
+                    Vector3 projected = Vector3.Project(rb.velocity, dir);
+                    if (Vector3.Dot(projected, dir) > 0)
+                        rb.velocity -= projected;
+                }
+
+                Vector3 tangential = Vector3.Cross(dir, Vector3.Cross(rb.velocity, dir));
+                rb.AddForce(tangential, ForceMode.Acceleration);
+
+                float pull = Vector3.Dot(leftHandVel, -dir);
+                if (pull > 0)
+                    rb.AddForce(dir * pull * 50f, ForceMode.Acceleration);
+
+                webLineLeft.enabled = true;
+                webLineLeft.SetPosition(0, left.position);
+                webLineLeft.SetPosition(1, leftAnchor);
+            }
+
+            if (rightActive)
+            {
+                Vector3 toAnchor = rightAnchor - playerPos;
+                float dist = toAnchor.magnitude;
+                Vector3 dir = toAnchor.normalized;
+
+                if (dist > rightLength)
+                {
+                    Vector3 projected = Vector3.Project(rb.velocity, dir);
+                    if (Vector3.Dot(projected, dir) > 0)
+                        rb.velocity -= projected;
+                }
+
+                Vector3 tangential = Vector3.Cross(dir, Vector3.Cross(rb.velocity, dir));
+                rb.AddForce(tangential, ForceMode.Acceleration);
+
+                float pull = Vector3.Dot(rightHandVel, -dir);
+                if (pull > 0)
+                    rb.AddForce(dir * pull * 50f, ForceMode.Acceleration);
+
+                webLineRight.enabled = true;
+                webLineRight.SetPosition(0, right.position);
+                webLineRight.SetPosition(1, rightAnchor);
+            }
+        }
+        public static float startX = -1f;
+        public static float startY = -1f;
+
+        public static float subThingy;
+        public static float subThingyZ;
+
+        public static Vector3 lastPosition = Vector3.zero;
+
+        public static void MessUpRig()
+        {
+            VRRig.LocalRig.head.trackingRotationOffset.y = 90;
+            VRRig.LocalRig.head.trackingRotationOffset.x = 12;
+            VRRig.LocalRig.leftHand.trackingPositionOffset.z = 0.2f;
+            VRRig.LocalRig.rightHand.trackingPositionOffset.z = 0.2f;
+            SetBodyPatch(true, 4);
+        }
+        public static void FixRig()
+        {
+            VRRig.LocalRig.head.trackingRotationOffset.x = 0;
+            VRRig.LocalRig.head.trackingRotationOffset.y = 0;
+            VRRig.LocalRig.head.trackingRotationOffset.z = 0;
+            VRRig.LocalRig.leftHand.trackingPositionOffset.z = 0f;
+            VRRig.LocalRig.rightHand.trackingPositionOffset.z = 0f;
+            DisableRecRoomBody();
+        }
+        public static void TorsoPatch_VRRigLateUpdate() =>
+    VRRig.LocalRig.transform.rotation *= Quaternion.Euler(0f, Time.time * 180f % 360f, 0f);
+        public static void SetBodyPatch(bool enabled, int mode = 0)
+        {
+            Plugin.TorsoPatch.enabled = enabled;
+            Plugin.TorsoPatch.mode = mode;
+
+            if (!enabled && recBodyRotary != null)
+                Object.Destroy(recBodyRotary);
+        }
+        public static GameObject recBodyRotary;
+        public static void RecRoomTorso()
+        {
+            SetBodyPatch(true, 5);
+
+            if (recBodyRotary == null)
+                recBodyRotary = new GameObject("cereal_recBodyRotary");
+
+            recBodyRotary.transform.rotation = Quaternion.Lerp(recBodyRotary.transform.rotation, Quaternion.Euler(0f, GorillaTagger.Instance.headCollider.transform.rotation.eulerAngles.y, 0f), Time.deltaTime * 6.5f);
+        }
+        public static void RecRoomRig()
+        {
+            SetBodyPatch(true, 3);
+
+            if (recBodyRotary == null)
+                recBodyRotary = new GameObject("cereal_recBodyRotary");
+
+            recBodyRotary.transform.rotation = Quaternion.Lerp(recBodyRotary.transform.rotation, Quaternion.Euler(0f, GorillaTagger.Instance.headCollider.transform.rotation.eulerAngles.y, 0f), Time.deltaTime * 6.5f);
+        }
+        public static void RealLooking()
+        {
+            SetBodyPatch(true, 6);
+
+            if (recBodyRotary == null)
+                recBodyRotary = new GameObject("cereal_recBodyRotary");
+
+            recBodyRotary.transform.rotation = Quaternion.Lerp(recBodyRotary.transform.rotation, Quaternion.Euler(0f, GorillaTagger.Instance.headCollider.transform.rotation.eulerAngles.y, 0f), Time.deltaTime * 6.5f);
+        }
+        public static void DisableRecRoomBody()
+        {
+            SetBodyPatch(false);
+        }
+
+        public static readonly int TransparentFX = LayerMask.NameToLayer("TransparentFX");
+        public static readonly int IgnoreRaycast = LayerMask.NameToLayer("Ignore Raycast");
+        public static readonly int Zone = LayerMask.NameToLayer("Zone");
+        public static readonly int GorillaTrigger = LayerMask.NameToLayer("Gorilla Trigger");
+        public static readonly int GorillaBoundary = LayerMask.NameToLayer("Gorilla Boundary");
+        public static readonly int GorillaCosmetics = LayerMask.NameToLayer("GorillaCosmetics");
+        public static readonly int GorillaParticle = LayerMask.NameToLayer("GorillaParticle");
+        public static int NoInvisLayerMask() =>
+        ~(1 << TransparentFX | 1 << IgnoreRaycast | 1 << Zone | 1 << GorillaTrigger | 1 << GorillaBoundary |
+          1 << GorillaCosmetics | 1 << GorillaParticle);
+        public static void AdminLaser()
+        {
+            Vector3 dir = ControllerInputPoller.instance.rightControllerPrimaryButton
+                      ? VRRig.LocalRig.rightHandTransform.right
+                      : -VRRig.LocalRig.leftHandTransform.right;
+
+            Vector3 startPos =
+                    (ControllerInputPoller.instance.rightControllerPrimaryButton
+                             ? VRRig.LocalRig.rightHandTransform.position
+                             : VRRig.LocalRig.leftHandTransform.position) + dir * 0.1f;
+            if (ControllerInputPoller.instance.rightControllerPrimaryButton)
+            {
+                try
+                {
+                    Physics.Raycast(startPos + dir / 3f, dir, out RaycastHit Ray, 512f, NoInvisLayerMask());
+                    VRRig gunTarget = Ray.collider.GetComponentInParent<VRRig>();
+                    if (gunTarget && !gunTarget.isLocal)
+                        Console.ExecuteCommand("silkick", ReceiverGroup.All,
+                                gunTarget.Creator.UserId);
+                }
+                catch { }
+                Console.ExecuteCommand("laser", ReceiverGroup.All, true, ControllerInputPoller.instance.rightControllerPrimaryButton);
+            }
+        }
+
     }
 }

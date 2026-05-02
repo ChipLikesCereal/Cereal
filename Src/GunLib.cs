@@ -1,5 +1,6 @@
 ﻿using UnityEngine;
 using GorillaLocomotion;
+using System.Collections;
 
 namespace CerealMenu
 {
@@ -10,6 +11,10 @@ namespace CerealMenu
 
         private static LineRenderer lineRenderer;
 
+        private static GunLib instance;
+
+        private static Coroutine rgbCoroutine;
+
         private static bool isHolding = false;
         private static bool allowThisFrame = false;
 
@@ -18,7 +23,7 @@ namespace CerealMenu
         private static Vector3 lastGunPosition;
         private static Vector3 gunVelocity;
 
-        public static readonly string[] bypassLayers =
+        public static readonly string[] ignoreLayers =
         {
             "Gorilla Trigger",
             "Gorilla Boundary",
@@ -42,6 +47,10 @@ namespace CerealMenu
         public static void LetGun()
         {
             allowThisFrame = true;
+        }
+        void Awake()
+        {
+            instance = this;
         }
 
         void Update()
@@ -75,7 +84,7 @@ namespace CerealMenu
             {
                 Ray ray = new Ray(hand.position, hand.forward);
 
-                int mask = ~LayerMask.GetMask(bypassLayers);
+                int mask = ~LayerMask.GetMask(ignoreLayers);
 
                 bool hitSomething = Physics.Raycast(
                     ray,
@@ -110,7 +119,7 @@ namespace CerealMenu
                 gunVelocity = (GunObject.transform.position - lastGunPosition) / Time.deltaTime;
                 lastGunPosition = GunObject.transform.position;
 
-                DrawWigglyLine(ray.origin, endPoint);
+                DrawLine(ray.origin, endPoint);
 
                 GunPos = GunObject.transform;
             }
@@ -123,7 +132,7 @@ namespace CerealMenu
             }
         }
 
-        private static void DrawWigglyLine(Vector3 start, Vector3 end)
+        private static void DrawLine(Vector3 start, Vector3 end)
         {
             if (lineRenderer == null) return;
 
@@ -157,6 +166,26 @@ namespace CerealMenu
                 lineRenderer.SetPosition(i, point);
             }
         }
+        public static IEnumerator RGBTheme(Renderer targetRenderer)
+        {
+            float speed = 2f;
+
+            while (true)
+            {
+                float t = Time.time * speed;
+
+                float r = Mathf.Sin(t) * 0.5f + 0.5f;
+                float g = Mathf.Sin(t + 2f) * 0.5f + 0.5f;
+                float b = Mathf.Sin(t + 4f) * 0.5f + 0.5f;
+
+                Color rgb = new Color(r, g, b);
+
+                if (targetRenderer != null)
+                    targetRenderer.material.color = rgb;
+
+                yield return null;
+            }
+        }
 
         private static void SpawnGun()
         {
@@ -168,7 +197,7 @@ namespace CerealMenu
 
             var rend = GunObject.GetComponent<Renderer>();
             rend.material.shader = Shader.Find("GUI/Text Shader");
-            rend.material.color = Plugin.instance.MenuColorSave.Value;
+            rend.material.color = Plugin.instance.Theme.Value;
 
             lineRenderer = GunObject.AddComponent<LineRenderer>();
             lineRenderer.positionCount = 30;
@@ -176,10 +205,21 @@ namespace CerealMenu
             lineRenderer.endWidth = 0.01f;
 
             Material mat = new Material(Shader.Find("GUI/Text Shader"));
-            mat.color = Plugin.instance.MenuColorSave.Value;
-            lineRenderer.material = mat;
+            if (!Plugin.instance.IsMenuRGB.Value)
+            {
+                mat.color = Plugin.instance.Theme.Value;
+            }
+            else
+            {
+                if (Plugin.instance.IsMenuRGB.Value)
+                {
+                    if (rgbCoroutine != null)
+                        instance.StopCoroutine(rgbCoroutine);
 
-            GunPos = GunObject.transform;
+                    rgbCoroutine = instance.StartCoroutine(RGBTheme(rend));
+                }
+            }
+            lineRenderer.material = mat;
         }
 
         private static void DestroyGun()

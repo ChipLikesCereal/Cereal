@@ -4,6 +4,6 @@
     {
         public const string GUID = "Lexi.Cereal.Menu";
         public const string Name = "Cereal.Menu";
-        public const string Version = "1.0.8";
+        public const string Version = "1.0.9";
     }
 }
