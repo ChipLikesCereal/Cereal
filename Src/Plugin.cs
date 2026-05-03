@@ -346,7 +346,7 @@ namespace CerealMenu
             Harmony harmony = new Harmony(PluginInfo.GUID);
             harmony.PatchAll();
 
-            Theme = Config.Bind("Settings", "Theme", Color.white, "");
+            Theme = Config.Bind("Settings", "Theme", Color.lightSkyBlue, "");
             FlySpeedSave = Config.Bind("Settings", "FlySpeedSave", 4f, "");
 
             IsMenuRGB = Config.Bind("Settings", "Rgb Mode", false, "");
@@ -776,7 +776,7 @@ namespace CerealMenu
                             AddToggleButton(ref zOffset, step, "Kormakur sign", IsKormakur, () => Mods.NoSign());
                             AddButton(zOffset, 0f, 0.2f, "Vid Hell", () => Mods.Video = "https://github.com/ChipLikesCereal/testvid/raw/refs/heads/main/GirlHell1999.mp4"); zOffset -= step;
                             AddButton(zOffset, 0f, 0.2f, "Vid OCD", () => Mods.Video = "https://github.com/ChipLikesCereal/testvid/raw/refs/heads/main/OCD.mp4"); zOffset -= step;
-                            AddButton(zOffset, 0f, 0.2f, "Vid Kitty", () => Mods.Video = "https://github.com/ChipLikesCereal/testvid/raw/refs/heads/main/OCD.mp4"); zOffset -= step;
+                            AddButton(zOffset, 0f, 0.2f, "Vid Kitty", () => Mods.Video = "https://github.com/ChipLikesCereal/testvid/raw/refs/heads/main/Kitty.mp4"); zOffset -= step;
                         }
                         else
                         {
